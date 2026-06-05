@@ -31,6 +31,9 @@ export function encryptToken(plaintext: string, keyB64: string, aad: string): st
 export function decryptToken(encoded: string, keyB64: string, aad: string): string {
   const key = decodeKey(keyB64)
   const buf = Buffer.from(encoded, 'base64')
+  if (buf.length < 1 + IV_BYTES + TAG_BYTES) {
+    throw new Error('Malformed token envelope: too short')
+  }
   const version = buf[0]
   if (version !== VERSION) {
     throw new Error(`Unsupported token cipher version: ${version}`)
