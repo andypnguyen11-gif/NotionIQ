@@ -5,6 +5,11 @@ const envSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url(),
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1, 'CLERK publishable key is required'),
   CLERK_SECRET_KEY: z.string().min(1, 'CLERK secret key is required'),
+  NOTION_OAUTH_CLIENT_ID: z.string().min(1, 'NOTION_OAUTH_CLIENT_ID is required'),
+  NOTION_OAUTH_CLIENT_SECRET: z.string().min(1, 'NOTION_OAUTH_CLIENT_SECRET is required'),
+  NOTION_OAUTH_REDIRECT_URI: z.string().url(),
+  TOKEN_ENCRYPTION_KEY: z.string().min(1, 'TOKEN_ENCRYPTION_KEY is required'),
+  OAUTH_STATE_SECRET: z.string().min(16, 'OAUTH_STATE_SECRET must be at least 16 chars'),
 })
 
 export type Env = z.infer<typeof envSchema>
