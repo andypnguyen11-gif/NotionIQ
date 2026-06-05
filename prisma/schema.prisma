@@ -1,12 +1,47 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+// Tenant identity is the Workspace (ADR-3). It carries no user column — the
+// user link lives in WorkspaceMember so multiple users can share a workspace later.
+model Workspace {
+  id              String   @id @default(cuid())
+  name            String
+  snapshotVersion Int      @default(0) // bumped each scan (spec §5); 0 until first scan
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  members          WorkspaceMember[]
+  notionConnection NotionConnection?
+}
+
+model WorkspaceMember {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String // Clerk user id
+  role        String    @default("owner")
+  createdAt   DateTime  @default(now())
+
+  @@unique([workspaceId, userId]) // a user joins a workspace at most once
+  @@unique([userId]) // MVP: a user belongs to exactly one workspace — relax this when team features land
+}
+
+model NotionConnection {
+  id                  String    @id @default(cuid())
+  workspaceId         String    @unique
+  workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  notionWorkspaceId   String // Notion's workspace_id; also used as AES-GCM AAD
+  notionWorkspaceName String?
+  botId               String
+  encryptedToken      String // AES-256-GCM ciphertext of the Notion access token (never plaintext)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
