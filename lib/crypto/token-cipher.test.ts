@@ -45,4 +45,9 @@ describe('token-cipher', () => {
     const shortKey = randomBytes(16).toString('base64')
     expect(() => encryptToken('secret', shortKey, aad)).toThrow(/32 bytes/)
   })
+
+  it('rejects a malformed envelope that is too short to contain iv + tag', () => {
+    expect(() => decryptToken('', keyB64, aad)).toThrow(/too short/)
+    expect(() => decryptToken(Buffer.from([1, 2, 3]).toString('base64'), keyB64, aad)).toThrow(/too short/)
+  })
 })
