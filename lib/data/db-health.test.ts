@@ -9,6 +9,14 @@ describe('pingDatabase (unit)', () => {
     expect(await pingDatabase(prisma)).toBe(true)
     expect(queryRaw).toHaveBeenCalledOnce()
   })
+
+  it('propagates the error when the query fails', async () => {
+    const queryRaw = vi.fn(async () => {
+      throw new Error('connection refused')
+    })
+    const prisma = { $queryRaw: queryRaw } as unknown as PrismaClient
+    await expect(pingDatabase(prisma)).rejects.toThrow('connection refused')
+  })
 })
 
 // Lightweight integration check — runs only when a real database is configured,
