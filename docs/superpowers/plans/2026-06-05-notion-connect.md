@@ -24,7 +24,8 @@
 | File | Responsibility |
 | --- | --- |
 | `prisma/schema.prisma` (modify) | Add `Workspace`, `WorkspaceMember`, `NotionConnection` models. |
-| `prisma/schema.test.ts` (create) | Assert the generated Prisma client exposes the new model delegates (offline, no DB). |
+| `prisma/schema.test.ts` (create) | Assert the generated client lists the new models via `Prisma.ModelName` (offline, no instantiation). |
+| `lib/prisma.ts` (modify) | Wire the Prisma 7 `@prisma/adapter-pg` driver adapter so `getPrisma()` can actually instantiate a client (resolves prereq #12). |
 | `lib/data/db-health.ts` (create) | `pingDatabase(prisma)` — `SELECT 1` connectivity check. |
 | `lib/data/db-health.test.ts` (create) | Unit (fake prisma) + optional real-DB integration test, skipped without `DATABASE_URL`. |
 | `lib/env.ts` (modify) | Add Notion OAuth creds, token-encryption key, OAuth state secret to the zod schema. |
@@ -66,16 +67,16 @@ Resolves the tracked prereq "Prisma v7 generator + datasource URL": the generato
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { PrismaClient } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 
-// Constructing PrismaClient does NOT connect — it only connects on first query —
-// so this runs offline and just asserts the generated client has our model delegates.
+// Offline check: `Prisma.ModelName` is a generated const object listing every model,
+// so this verifies `prisma generate` produced our models WITHOUT constructing a client
+// (Prisma 7's driver-adapter engine requires an adapter to instantiate — see lib/prisma.ts).
 describe('prisma schema', () => {
-  it('exposes the workspace, workspaceMember, and notionConnection delegates', () => {
-    const client = new PrismaClient()
-    expect(client).toHaveProperty('workspace')
-    expect(client).toHaveProperty('workspaceMember')
-    expect(client).toHaveProperty('notionConnection')
+  it('generates the workspace, workspaceMember, and notionConnection models', () => {
+    expect(Object.keys(Prisma.ModelName)).toEqual(
+      expect.arrayContaining(['Workspace', 'WorkspaceMember', 'NotionConnection']),
+    )
   })
 })
 ```
@@ -83,7 +84,7 @@ describe('prisma schema', () => {
 - [ ] **Step 2: Run the test and watch it fail**
 
 Run: `npm run test -- --run prisma/schema.test.ts`
-Expected: FAIL — the generated client has no `workspace`/`workspaceMember`/`notionConnection` delegate (or `@prisma/client` not generated yet).
+Expected: FAIL — `Prisma.ModelName` does not yet list the new models (or `@prisma/client` not generated with them yet).
 
 - [ ] **Step 3: Add the models**
 
@@ -138,6 +139,40 @@ model NotionConnection {
   updatedAt           DateTime  @updatedAt
 }
 ```
+
+- [ ] **Step 3b: Wire the Prisma 7 driver adapter (resolves prereq #12)**
+
+Prisma 7's `prisma-client-js` generator uses the driver-adapter engine: `new PrismaClient()` with no arguments throws `Using engine type 'client' requires either 'adapter' or 'accelerateUrl'`. Install the Postgres adapter (it bundles `pg`, so no separate `pg` install) and wire it into the existing lazy singleton.
+
+Run: `npm install @prisma/adapter-pg@7.8.0`
+
+Replace the contents of `lib/prisma.ts` with:
+
+```ts
+import { PrismaClient } from '@prisma/client'
+import { PrismaPg } from '@prisma/adapter-pg'
+import { getEnv } from './env'
+
+export function createPrismaSingleton<T>(globalRef: { prisma?: T }, factory: () => T): T {
+  if (!globalRef.prisma) {
+    globalRef.prisma = factory()
+  }
+  return globalRef.prisma
+}
+
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
+
+// Lazy: do NOT construct PrismaClient at import time. App code calls getPrisma() at
+// request time. The Prisma 7 driver-adapter engine requires an adapter at construction.
+export function getPrisma(): PrismaClient {
+  return createPrismaSingleton(globalForPrisma, () => {
+    const adapter = new PrismaPg(getEnv().DATABASE_URL)
+    return new PrismaClient({ adapter })
+  })
+}
+```
+
+The existing `lib/prisma.test.ts` (which exercises `createPrismaSingleton` with a fake factory) is unaffected and must still pass.
 
 - [ ] **Step 4: Regenerate the client and run the schema test**
 
@@ -204,8 +239,8 @@ Ensure `DATABASE_URL` in `.env` points at a real dev Postgres (e.g. a free Neon 
 Run: `npx prisma migrate dev --name notion_connect_init`
 Expected: creates `prisma/migrations/<timestamp>_notion_connect_init/migration.sql` and applies it.
 
-> If no database is reachable in this environment, skip applying but still generate the SQL so the migration is committed:
-> `npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > /tmp/migration.sql` and hand-place it under `prisma/migrations/0001_notion_connect_init/migration.sql`, then note in the commit body that it is unapplied. The `migrate dev` form is strongly preferred when a DB exists.
+> If no database is reachable in this environment, skip applying but still generate the SQL so the migration is committed (Prisma 7 flag is `--to-schema`, not `--to-schema-datamodel`):
+> `npx prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script > /tmp/migration.sql` (the SQL goes to stdout; the "Loaded Prisma config" banner goes to stderr) and hand-place it under `prisma/migrations/0001_notion_connect_init/migration.sql`, then note in the commit body that it is unapplied. The `migrate dev` form is strongly preferred when a DB exists.
 
 - [ ] **Step 10: Verify the full gate, then commit**
 
@@ -213,9 +248,11 @@ Run: `npm run typecheck && npm run lint && npm run test -- --run && npm run buil
 Expected: all pass.
 
 ```bash
-git add prisma/schema.prisma prisma/schema.test.ts lib/data/db-health.ts lib/data/db-health.test.ts prisma/migrations
+git add prisma/schema.prisma prisma/schema.test.ts lib/prisma.ts lib/data/db-health.ts lib/data/db-health.test.ts prisma/migrations package.json package-lock.json
 git commit -m "feat(db): add workspace, membership, and notion-connection models"
 ```
+
+(Commit body should note: migration generated offline and unapplied — no reachable DB; and that `lib/prisma.ts` now wires the `@prisma/adapter-pg` driver adapter required by Prisma 7.)
 
 ---
 
