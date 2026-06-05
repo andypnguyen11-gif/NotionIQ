@@ -32,27 +32,33 @@
 ## Task 1: Scaffold the project
 
 **Files:**
+
 - Create: `package.json`, `tsconfig.json`, `next.config.ts`, `tailwind.config.ts`, `app/layout.tsx`, `app/page.tsx`, `vitest.config.ts`
 
 - [ ] **Step 1: Scaffold Next.js with TypeScript + Tailwind**
 
 Run (non-interactive):
+
 ```bash
 npx create-next-app@latest . --ts --tailwind --app --src-dir=false --import-alias "@/*" --no-eslint --use-npm --yes
 ```
+
 Expected: project files generated in the current directory.
 
 - [ ] **Step 2: Add test + validation dependencies**
 
 Run:
+
 ```bash
 npm install zod && npm install -D vitest @vitejs/plugin-react vite-tsconfig-paths
 ```
+
 Expected: dependencies added to `package.json`.
 
 - [ ] **Step 3: Configure Vitest**
 
 Create `vitest.config.ts`:
+
 ```ts
 import { defineConfig } from 'vitest/config'
 import tsconfigPaths from 'vite-tsconfig-paths'
@@ -70,6 +76,7 @@ export default defineConfig({
 - [ ] **Step 4: Add test + typecheck scripts**
 
 In `package.json`, add to `"scripts"`:
+
 ```json
 "test": "vitest run",
 "test:watch": "vitest",
@@ -79,9 +86,11 @@ In `package.json`, add to `"scripts"`:
 - [ ] **Step 5: Verify the app builds and the test runner works**
 
 Run:
+
 ```bash
 npm run typecheck && npx vitest run --passWithNoTests
 ```
+
 Expected: typecheck passes; Vitest reports "no test files found" but exits 0.
 
 - [ ] **Step 6: Commit**
@@ -96,6 +105,7 @@ git commit -m "chore: scaffold next.js app with vitest and zod"
 ## Task 2: Typed environment validation
 
 **Files:**
+
 - Create: `lib/env.ts`
 - Test: `lib/env.test.ts`
 - Create: `.env.example`
@@ -103,6 +113,7 @@ git commit -m "chore: scaffold next.js app with vitest and zod"
 - [ ] **Step 1: Write the failing test**
 
 Create `lib/env.test.ts`:
+
 ```ts
 import { describe, it, expect } from 'vitest'
 import { parseEnv } from './env'
@@ -137,6 +148,7 @@ Expected: FAIL — `parseEnv` is not exported / module not found.
 - [ ] **Step 3: Write minimal implementation**
 
 Create `lib/env.ts`:
+
 ```ts
 import { z } from 'zod'
 
@@ -173,6 +185,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Document the env contract**
 
 Create `.env.example`:
+
 ```
 DATABASE_URL="postgresql://user:pass@localhost:5432/notioniq"
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
@@ -190,20 +203,24 @@ git commit -m "feat: add zod-validated environment config"
 ## Task 3: Prisma client singleton
 
 **Files:**
+
 - Create: `prisma/schema.prisma`, `lib/prisma.ts`
 - Test: `lib/prisma.test.ts`
 
 - [ ] **Step 1: Initialize Prisma**
 
 Run:
+
 ```bash
 npm install -D prisma && npm install @prisma/client && npx prisma init --datasource-provider postgresql && npx prisma generate
 ```
+
 Expected: `prisma/schema.prisma` and a `.env` with `DATABASE_URL` created, and the (empty-model) client generated so `@prisma/client` is importable in tests.
 
 - [ ] **Step 2: Write the failing test**
 
 Create `lib/prisma.test.ts`:
+
 ```ts
 import { describe, it, expect } from 'vitest'
 import { createPrismaSingleton } from './prisma'
@@ -234,13 +251,11 @@ Expected: FAIL — `createPrismaSingleton` not exported.
 - [ ] **Step 4: Write minimal implementation**
 
 Create `lib/prisma.ts`:
+
 ```ts
 import { PrismaClient } from '@prisma/client'
 
-export function createPrismaSingleton<T>(
-  globalRef: { prisma?: T },
-  factory: () => T,
-): T {
+export function createPrismaSingleton<T>(globalRef: { prisma?: T }, factory: () => T): T {
   if (!globalRef.prisma) {
     globalRef.prisma = factory()
   }
@@ -264,11 +279,13 @@ Expected: PASS (2 tests).
 - [ ] **Step 6: Generate the client and commit**
 
 Run:
+
 ```bash
 npx prisma generate
 git add prisma/schema.prisma lib/prisma.ts lib/prisma.test.ts
 git commit -m "feat: add cached prisma client singleton"
 ```
+
 Expected: client generates; commit succeeds.
 
 ---
@@ -276,12 +293,14 @@ Expected: client generates; commit succeeds.
 ## Task 4: Health check endpoint
 
 **Files:**
+
 - Create: `app/api/health/route.ts`
 - Test: `app/api/health/route.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 Create `app/api/health/route.test.ts`:
+
 ```ts
 import { describe, it, expect } from 'vitest'
 import { GET } from './route'
@@ -305,6 +324,7 @@ Expected: FAIL — `./route` not found.
 - [ ] **Step 3: Write minimal implementation**
 
 Create `app/api/health/route.ts`:
+
 ```ts
 import { NextResponse } from 'next/server'
 
@@ -330,12 +350,14 @@ git commit -m "feat: add /api/health liveness endpoint"
 ## Task 5: Clerk auth + protected app shell
 
 **Files:**
+
 - Create: `middleware.ts`, `app/(app)/layout.tsx`
 - Modify: `app/layout.tsx` (wrap in `<ClerkProvider>`), `lib/env.ts` (add Clerk keys), `.env.example`
 
 - [ ] **Step 1: Install Clerk**
 
 Run:
+
 ```bash
 npm install @clerk/nextjs
 ```
@@ -343,15 +365,20 @@ npm install @clerk/nextjs
 - [ ] **Step 2: Extend the env schema for Clerk (test first)**
 
 Add to `lib/env.test.ts` inside the `describe('parseEnv'...)` block:
+
 ```ts
-  it('requires Clerk keys', () => {
-    expect(() => parseEnv({
+it('requires Clerk keys', () => {
+  expect(() =>
+    parseEnv({
       DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
       NEXT_PUBLIC_APP_URL: 'http://localhost:3000',
-    })).toThrow(/CLERK/)
-  })
+    }),
+  ).toThrow(/CLERK/)
+})
 ```
+
 And update the `valid` fixture at the top of the file to include:
+
 ```ts
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: 'pk_test_x',
   CLERK_SECRET_KEY: 'sk_test_x',
@@ -365,6 +392,7 @@ Expected: FAIL — the new `requires Clerk keys` test fails (keys not yet in sch
 - [ ] **Step 4: Add Clerk keys to the env schema**
 
 In `lib/env.ts`, add to `envSchema`:
+
 ```ts
   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().min(1, 'CLERK publishable key is required'),
   CLERK_SECRET_KEY: z.string().min(1, 'CLERK secret key is required'),
@@ -378,6 +406,7 @@ Expected: PASS (all env tests).
 - [ ] **Step 6: Add Clerk middleware**
 
 Create `middleware.ts`:
+
 ```ts
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 
@@ -397,6 +426,7 @@ export const config = {
 - [ ] **Step 7: Wrap the root layout in ClerkProvider**
 
 In `app/layout.tsx`, import and wrap the existing `<html>...</html>` tree:
+
 ```tsx
 import { ClerkProvider } from '@clerk/nextjs'
 // ...inside the default export's return, wrap the root element:
@@ -406,6 +436,7 @@ import { ClerkProvider } from '@clerk/nextjs'
 - [ ] **Step 8: Create the protected app shell**
 
 Create `app/(app)/layout.tsx`:
+
 ```tsx
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return <div className="min-h-screen">{children}</div>
@@ -415,6 +446,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 - [ ] **Step 9: Document the new env vars**
 
 Append to `.env.example`:
+
 ```
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="pk_test_xxx"
 CLERK_SECRET_KEY="sk_test_xxx"
@@ -423,10 +455,13 @@ CLERK_SECRET_KEY="sk_test_xxx"
 - [ ] **Step 10: Verify typecheck + tests pass, then commit**
 
 Run:
+
 ```bash
 npm run typecheck && npx vitest run
 ```
+
 Expected: typecheck passes; all tests pass.
+
 ```bash
 git add -A
 git commit -m "feat: add clerk auth with protected /app routes"
@@ -437,11 +472,13 @@ git commit -m "feat: add clerk auth with protected /app routes"
 ## Task 6: CI pipeline
 
 **Files:**
+
 - Create: `.github/workflows/ci.yml`
 
 - [ ] **Step 1: Create the workflow**
 
 Create `.github/workflows/ci.yml`:
+
 ```yaml
 name: CI
 on:
@@ -473,9 +510,11 @@ jobs:
 - [ ] **Step 2: Verify the steps pass locally (CI parity check)**
 
 Run:
+
 ```bash
 npm run typecheck && npm run test && npm run build
 ```
+
 Expected: all three succeed locally (proves the CI steps will pass).
 
 - [ ] **Step 3: Commit**
@@ -490,12 +529,14 @@ git commit -m "ci: add typecheck, test, and build pipeline"
 ## Task 7: Linting, formatting, and bootstrap README
 
 **Files:**
+
 - Create: `eslint.config.mjs`, `.prettierrc`, `README.md`
 - Modify: `package.json` (lint/format scripts), `.github/workflows/ci.yml` (add lint step)
 
 - [ ] **Step 1: Install lint + format tooling**
 
 Run:
+
 ```bash
 npm install -D eslint @eslint/js typescript-eslint eslint-config-next prettier
 ```
@@ -503,22 +544,21 @@ npm install -D eslint @eslint/js typescript-eslint eslint-config-next prettier
 - [ ] **Step 2: Add ESLint flat config**
 
 Create `eslint.config.mjs`:
+
 ```js
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import next from 'eslint-config-next'
 
-export default tseslint.config(
-  js.configs.recommended,
-  ...tseslint.configs.recommended,
-  ...next(),
-  { ignores: ['.next/**', 'node_modules/**', 'prisma/generated/**'] },
-)
+export default tseslint.config(js.configs.recommended, ...tseslint.configs.recommended, ...next(), {
+  ignores: ['.next/**', 'node_modules/**', 'prisma/generated/**'],
+})
 ```
 
 - [ ] **Step 3: Add Prettier config**
 
 Create `.prettierrc`:
+
 ```json
 { "semi": false, "singleQuote": true, "printWidth": 100 }
 ```
@@ -526,6 +566,7 @@ Create `.prettierrc`:
 - [ ] **Step 4: Add scripts**
 
 In `package.json` `"scripts"`, add:
+
 ```json
 "lint": "eslint .",
 "format": "prettier --write ."
@@ -534,32 +575,38 @@ In `package.json` `"scripts"`, add:
 - [ ] **Step 5: Run lint and fix any reported issues**
 
 Run:
+
 ```bash
 npm run format && npm run lint
 ```
+
 Expected: formatting applied; `eslint .` exits 0 (fix any violations it reports before continuing).
 
 - [ ] **Step 6: Write the bootstrap README**
 
 Create `README.md`:
+
 ```markdown
 # NotionIQ
 
 AI business analyst for Notion + token-gated, filterable charts embedded in Notion pages.
 
 ## Local setup
+
 1. `npm install`
 2. Copy `.env.example` to `.env` and fill in values.
 3. `npx prisma generate`
 4. `npm run dev` — app at http://localhost:3000
 
 ## Checks
+
 - `npm run typecheck` — types
 - `npm run lint` — lint
 - `npm run test` — unit/integration tests
 - `npm run build` — production build
 
 ## Docs
+
 - Design spec: `docs/superpowers/specs/2026-06-05-notioniq-mvp-design.md`
 - Roadmap: `Plans/00-ROADMAP.md`
 ```
@@ -571,10 +618,13 @@ In `.github/workflows/ci.yml`, add a `- run: npm run lint` step immediately afte
 - [ ] **Step 8: Verify the full CI sequence locally, then commit**
 
 Run:
+
 ```bash
 npm run typecheck && npm run lint && npm run test && npm run build
 ```
+
 Expected: all four succeed.
+
 ```bash
 git add -A
 git commit -m "chore: add eslint, prettier, and bootstrap readme"

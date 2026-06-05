@@ -14,10 +14,10 @@ MVP v1
 
 Possible names:
 
-* NotionIQ
-* Operator for Notion
-* Insight Agent
-* Workspace Analyst
+- NotionIQ
+- Operator for Notion
+- Insight Agent
+- Workspace Analyst
 
 ---
 
@@ -55,10 +55,10 @@ Sales Pipeline
 
 User responsibility:
 
-* Build dashboard
-* Pick metrics
-* Interpret numbers
-* Decide actions
+- Build dashboard
+- Pick metrics
+- Interpret numbers
+- Decide actions
 
 ---
 
@@ -98,21 +98,21 @@ Many small businesses already operate inside Notion.
 
 They use Notion for:
 
-* Inventory
-* Sales tracking
-* CRM
-* Projects
-* Content calendars
-* Goals
-* Expenses
+- Inventory
+- Sales tracking
+- CRM
+- Projects
+- Content calendars
+- Goals
+- Expenses
 
 However, users struggle with:
 
-* Understanding trends
-* Identifying hidden problems
-* Knowing what changed
-* Finding business risks
-* Making decisions from their data
+- Understanding trends
+- Identifying hidden problems
+- Knowing what changed
+- Finding business risks
+- Making decisions from their data
 
 Most users do not need another chart.
 
@@ -128,11 +128,11 @@ Small Business Owner
 
 Examples:
 
-* Resellers
-* Etsy sellers
-* Freelancers
-* Agencies
-* Consultants
+- Resellers
+- Etsy sellers
+- Freelancers
+- Agencies
+- Consultants
 
 ## Pain Points
 
@@ -158,10 +158,10 @@ so my AI analyst can review my existing data.
 
 Acceptance Criteria:
 
-* User authenticates with Notion OAuth
-* User grants workspace permissions
-* User selects databases
-* Connection is stored securely
+- User authenticates with Notion OAuth
+- User grants workspace permissions
+- User selects databases
+- Connection is stored securely
 
 ---
 
@@ -197,19 +197,19 @@ Reseller
 
 Metrics available:
 
-* Revenue
-* Profit
-* ROI
-* Inventory health
+- Revenue
+- Profit
+- ROI
+- Inventory health
 
 ---
 
 Acceptance Criteria:
 
-* AI identifies database purpose
-* AI maps fields correctly
-* User can confirm mappings
-* User can correct mistakes
+- AI identifies database purpose
+- AI maps fields correctly
+- User can confirm mappings
+- User can correct mistakes
 
 ---
 
@@ -251,10 +251,10 @@ Your jacket category generated your highest ROI.
 
 Acceptance Criteria:
 
-* Report page created in Notion
-* Report contains metrics
-* Report contains AI explanation
-* Report contains actions
+- Report page created in Notion
+- Report contains metrics
+- Report contains AI explanation
+- Report contains actions
 
 ---
 
@@ -284,9 +284,9 @@ Projects:
 
 Acceptance Criteria:
 
-* System detects meaningful changes
-* AI explains possible causes
-* AI recommends next steps
+- System detects meaningful changes
+- AI explains possible causes
+- AI recommends next steps
 
 ---
 
@@ -316,9 +316,9 @@ Week 3:
 
 Acceptance Criteria:
 
-* Previous reports stored
-* Historical trends analyzed
-* Repeated issues detected
+- Previous reports stored
+- Historical trends analyzed
+- Repeated issues detected
 
 ---
 
@@ -340,10 +340,10 @@ Clerk
 
 Required:
 
-* Signup
-* Login
-* Logout
-* Protected routes
+- Signup
+- Login
+- Logout
+- Protected routes
 
 ---
 
@@ -357,10 +357,10 @@ Connect workspace securely.
 
 Requirements:
 
-* OAuth connection
-* Store workspace
-* Store encrypted token
-* Disconnect workspace
+- OAuth connection
+- Store workspace
+- Store encrypted token
+- Disconnect workspace
 
 ---
 
@@ -374,11 +374,11 @@ Understand user's Notion structure.
 
 Scan:
 
-* Databases
-* Properties
-* Relations
-* Property types
-* Sample rows
+- Databases
+- Properties
+- Relations
+- Property types
+- Sample rows
 
 Example:
 
@@ -414,15 +414,15 @@ Responsibilities:
 
 Analyze:
 
-* Database names
-* Properties
-* Relationships
+- Database names
+- Properties
+- Relationships
 
 Return:
 
-* Business type
-* Data model
-* Available insights
+- Business type
+- Data model
+- Available insights
 
 Example:
 
@@ -629,9 +629,9 @@ Redis
 
 Used for:
 
-* scheduled reports
-* long-running analysis
-* AI processing
+- scheduled reports
+- long-running analysis
+- AI processing
 
 ---
 
@@ -723,20 +723,20 @@ not:
 
 Do NOT build:
 
-* Dashboard builder
-* Advanced charts
-* Custom BI reports
-* Mobile app
-* Slack integration
-* Email reports
-* Google Sheets
-* Airtable
-* QuickBooks
-* Shopify
-* Team accounts
-* Enterprise permissions
-* Auto database editing
-* Full workspace restructuring
+- Dashboard builder
+- Advanced charts
+- Custom BI reports
+- Mobile app
+- Slack integration
+- Email reports
+- Google Sheets
+- Airtable
+- QuickBooks
+- Shopify
+- Team accounts
+- Enterprise permissions
+- Auto database editing
+- Full workspace restructuring
 
 ---
 
@@ -784,9 +784,9 @@ First supported:
 
 Small businesses:
 
-* Inventory
-* Sales
-* CRM
+- Inventory
+- Sales
+- CRM
 
 ---
 
@@ -854,9 +854,9 @@ QuickBooks
 
 Free:
 
-* 1 workspace
-* Manual report
-* Basic insights
+- 1 workspace
+- Manual report
+- Basic insights
 
 Pro:
 
@@ -864,10 +864,10 @@ $10-$15/month
 
 Includes:
 
-* Weekly reports
-* Business memory
-* Advanced insights
-* Unlimited analysis
+- Weekly reports
+- Business memory
+- Advanced insights
+- Unlimited analysis
 
 ---
 

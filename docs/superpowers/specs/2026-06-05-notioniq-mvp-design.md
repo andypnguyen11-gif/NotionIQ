@@ -29,9 +29,9 @@ The analytics engine never lets the AI compute numbers; the AI only interprets v
 
 ## 2. Product shape
 
-| Tier | Includes |
-|------|----------|
-| **Free** | 1 manual AI text report · **1 embedded chart, non-filterable** · manual refresh |
+| Tier                | Includes                                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Free**            | 1 manual AI text report · **1 embedded chart, non-filterable** · manual refresh                                                      |
 | **Pro ($10–15/mo)** | Unlimited **filterable** charts · saved/custom filters · scheduled refresh (default every 24h) · business memory · advanced insights |
 
 A free non-filterable chart runs the **same** embed + token pipeline as a Pro chart, with filters
@@ -42,6 +42,7 @@ disabled. No special-case free renderer — one code path, gated by entitlements
 ## 3. Architecture decisions (ADRs)
 
 ### ADR-1 — Filters query a stored snapshot, never live Notion
+
 Filters aggregate against a row-level `NormalizedRecord` table in Postgres (written by the
 scanner/analytics engine), cached in Redis — **not** the live Notion API.
 
@@ -51,6 +52,7 @@ scanner/analytics engine), cached in Redis — **not** the live Notion API.
   label in the embed UI and a refresh trigger (manual for Free, scheduled for Pro).
 
 ### ADR-2 — Embed authentication: durable scoped URL token → short-lived in-memory access token
+
 The Notion `embed` block stores a fixed `src` URL containing a **durable, signed, revocable token**
 scoped to `chartId + workspaceId` that **carries no data**. On each iframe load, the embed page
 **exchanges it server-side** for a **short-lived access token held in the iframe's JS memory** (not a
@@ -64,6 +66,7 @@ cookie). All subsequent data fetches use the short-lived token.
   (CHIPS). An in-memory access token sidesteps third-party-cookie blocking.
 
 **Token lifetimes & rotation:**
+
 - **Exchange (access) token:** short wall-clock TTL, **60–120s**; re-minted on every iframe load.
 - **Durable URL token:** a **revocable reference** (`EmbedToken` record), **not** time-expired by
   default — because the token is baked into the Notion embed `src` and is not re-minted on our
@@ -74,6 +77,7 @@ cookie). All subsequent data fetches use the short-lived token.
   (which already rewrites report content); never a hard TTL that can orphan an embedded chart.
 
 **Storage, format, rotation, audit (durable token):**
+
 - **Format:** opaque, high-entropy random (≥256 bits), **not** a JWT. A durable JWT is
   self-validating and cannot be cheaply revoked — which is exactly the failure mode we rejected.
   An opaque token is validated by DB lookup, so revocation is immediate.
@@ -95,6 +99,7 @@ cookie). All subsequent data fetches use the short-lived token.
 norm for Notion embeds); revocation is near-real-time and bounded by the access-token TTL above.
 
 ### ADR-3 — Tenant isolation at two layers
+
 1. **Query-builder layer (mandatory):** every data-access path is scoped by `workspaceId`; no query
    may be issued without it. Enforced in a thin data-access module, not scattered through handlers.
 2. **DB policy layer / RLS (hardening goal, conditional):** Postgres Row-Level Security scoped by
@@ -104,15 +109,18 @@ norm for Notion embeds); revocation is near-real-time and bounded by the access-
    planning.
 
 ### ADR-4 — Deterministic cache keys
+
 Aggregation cache key = `chartId : workspaceId : normalizedFilterSet : snapshotVersion`.
 A new scan bumps `snapshotVersion` on the workspace, so cached aggregations invalidate automatically
 (new version ⇒ new key space) with no explicit cache busting.
 
 ### ADR-5 — Refresh SLA tiers (defined now)
+
 - **Free:** manual refresh only.
 - **Pro:** scheduled refresh via BullMQ, default every 24h, configurable.
 
 ### ADR-6 — Versioned chart data contract
+
 A frozen, typed `ChartDataContract` (zod schema with a `version` field) is the only interface between
 the embed and the data API, established day one so adding chart types later doesn't break embeds.
 
@@ -121,19 +129,22 @@ the embed and the data API, established day one so adding chart types later does
 ## 4. Charts + filtering subsystem (the new core)
 
 ### In-app vs. in-embed split
-- **Filter *definitions* are configured in the main web app** (chart owner): the **Filter Engine**
-  inspects each chart's mapped source fields and *suggests* filter candidates by type —
+
+- **Filter _definitions_ are configured in the main web app** (chart owner): the **Filter Engine**
+  inspects each chart's mapped source fields and _suggests_ filter candidates by type —
   `select/status → multi-select`, `date → range`, `number → min/max/bucket`. The owner accepts
   suggestions and can **add / remove / edit** filters per chart. ("AI-suggested + user-customizable.")
-- **Filter *values* are applied inside the embed** by any page viewer: dropdowns / date pickers /
+- **Filter _values_ are applied inside the embed** by any page viewer: dropdowns / date pickers /
   typeaheads rendered in the iframe; changing them re-fetches a fresh aggregation.
 
 ### Filter cardinality control
+
 The Filter Engine detects high-cardinality fields and switches them from multi-select to
 **server-side typeahead** (or declines to suggest them), so the iframe never loads thousands of
 options and query cost stays bounded.
 
 ### New modules (consistent with the `lib/` dependency map in Architecture.md)
+
 - `lib/charts/chart-builder.ts` — turns a metric + approved mapping into a chart definition.
 - `lib/charts/filter-engine.ts` — suggests, validates, and cardinality-guards filters from field types.
 - `lib/charts/snapshot-query.ts` — applies filters + aggregates over `NormalizedRecord`; Redis-cached
@@ -145,6 +156,7 @@ options and query cost stays bounded.
 - Report writer extended to insert `embed` blocks pointing at the signed embed URL.
 
 ### Data flow (chart path)
+
 ```
 Scanner → NormalizedRecord (row-level truth, snapshotVersion N)
    → Chart definition (chart-builder) + suggested ChartFilters (filter-engine)
@@ -244,7 +256,7 @@ to the Free→Pro boundary in Section 2.
 ## 11. Out of scope (MVP)
 
 Carried from PRD, **except** the charts/filtering exclusions, which this spec deliberately reverses:
-no dashboard *builder*, no mobile app, no Slack/email/Sheets/Airtable/QuickBooks/Shopify integrations,
+no dashboard _builder_, no mobile app, no Slack/email/Sheets/Airtable/QuickBooks/Shopify integrations,
 no team accounts/enterprise permissions, no auto database editing, no full workspace restructuring,
 no AI chat (future).
 

@@ -29,16 +29,16 @@ token-gated, filterable chart widgets embedded in Notion pages.
 
 ## Milestone → plan map
 
-| # | Milestone | Plan file | Depends on | Produces (working, testable) |
-|---|-----------|-----------|------------|------------------------------|
-| M0 | Foundation | `01-foundation.md` | — | Running app, typed env, Prisma client, health check, Clerk-protected routes, CI |
-| M1 | Notion connect | `02-notion-connect.md` | M0 | OAuth connect/disconnect, AES-GCM encrypted token at rest |
-| M2 | Understand workspace | `03-scanner-schema-mapper.md` | M1 | Scanner + AI schema mapper + human-in-the-loop mapping review |
-| M3 | Truth layer | `04-analytics-truth-layer.md` | M2 | Analytics engine + `NormalizedRecord` + metric snapshots + `snapshotVersion` |
-| M4 | Reports | `05-insight-verifier-report-writer.md` | M3 | Insight agent + verifier + Notion text-report writer |
-| M5 | Charts | `06-charts-embed-filters.md` | M4 | chart-builder, filter-engine (cardinality-guarded), snapshot-query, embed route, embed-auth, versioned contract, embed-block insertion |
-| M6 | Business | `07-billing-scheduling-observability.md` | M4 (M5 for chart gating) | Stripe billing + entitlements gating + scheduled refresh + observability |
-| M7 | Hardening | `08-hardening.md` | M0–M6 | Security review, RLS+pooling validation, AI evals, load test |
+| #   | Milestone            | Plan file                                | Depends on               | Produces (working, testable)                                                                                                           |
+| --- | -------------------- | ---------------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| M0  | Foundation           | `01-foundation.md`                       | —                        | Running app, typed env, Prisma client, health check, Clerk-protected routes, CI                                                        |
+| M1  | Notion connect       | `02-notion-connect.md`                   | M0                       | OAuth connect/disconnect, AES-GCM encrypted token at rest                                                                              |
+| M2  | Understand workspace | `03-scanner-schema-mapper.md`            | M1                       | Scanner + AI schema mapper + human-in-the-loop mapping review                                                                          |
+| M3  | Truth layer          | `04-analytics-truth-layer.md`            | M2                       | Analytics engine + `NormalizedRecord` + metric snapshots + `snapshotVersion`                                                           |
+| M4  | Reports              | `05-insight-verifier-report-writer.md`   | M3                       | Insight agent + verifier + Notion text-report writer                                                                                   |
+| M5  | Charts               | `06-charts-embed-filters.md`             | M4                       | chart-builder, filter-engine (cardinality-guarded), snapshot-query, embed route, embed-auth, versioned contract, embed-block insertion |
+| M6  | Business             | `07-billing-scheduling-observability.md` | M4 (M5 for chart gating) | Stripe billing + entitlements gating + scheduled refresh + observability                                                               |
+| M7  | Hardening            | `08-hardening.md`                        | M0–M6                    | Security review, RLS+pooling validation, AI evals, load test                                                                           |
 
 ---
 
@@ -67,13 +67,13 @@ token-gated, filterable chart widgets embedded in Notion pages.
 
 ## Dependency, secrets & cost map (so JIT planning doesn't blindside earlier milestones)
 
-| Concern | Detail | First needed |
-|---------|--------|--------------|
-| **External services** | Neon (Postgres), Upstash (Redis), Clerk, Notion OAuth app, Anthropic API, Stripe, Vercel, PostHog, Sentry | Neon+Clerk: M0 · Notion: M1 · Anthropic: M2 · Redis: M5 (aggregation cache) · Stripe: M6 |
-| **Secrets** | `DATABASE_URL`, `CLERK_*`, `NOTION_OAUTH_CLIENT_ID/SECRET`, `NOTION_REDIRECT_URI`, `TOKEN_ENCRYPTION_KEY` (AES-GCM), `EMBED_JWT_SIGNING_KEY`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `POSTHOG_KEY`, `SENTRY_DSN` | added to `lib/env.ts` at the milestone that first uses them |
-| **Migrations** | Prisma migrations are additive per milestone; `Workspace.snapshotVersion` and `NormalizedRecord` land in M3; `Chart`/`ChartFilter`/`EmbedToken` in M5. No destructive migrations assumed. | M0 establishes the migration baseline |
-| **Cost-sensitive** | Anthropic token usage (insight/verifier — cache prompts, batch where possible), Notion API calls (paginated + snapshot-cached, never per-filter), Redis aggregation cache (bounded by cardinality caps) | M2/M3/M5 |
-| **Decisions that must not be re-litigated later** | snapshot-not-live filtering (ADR-1), opaque-token-not-JWT for durable embed token (ADR-2), mandatory query-layer tenant scoping (ADR-3) | locked in spec |
+| Concern                                           | Detail                                                                                                                                                                                                                                                    | First needed                                                                             |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **External services**                             | Neon (Postgres), Upstash (Redis), Clerk, Notion OAuth app, Anthropic API, Stripe, Vercel, PostHog, Sentry                                                                                                                                                 | Neon+Clerk: M0 · Notion: M1 · Anthropic: M2 · Redis: M5 (aggregation cache) · Stripe: M6 |
+| **Secrets**                                       | `DATABASE_URL`, `CLERK_*`, `NOTION_OAUTH_CLIENT_ID/SECRET`, `NOTION_REDIRECT_URI`, `TOKEN_ENCRYPTION_KEY` (AES-GCM), `EMBED_JWT_SIGNING_KEY`, `ANTHROPIC_API_KEY`, `REDIS_URL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `POSTHOG_KEY`, `SENTRY_DSN` | added to `lib/env.ts` at the milestone that first uses them                              |
+| **Migrations**                                    | Prisma migrations are additive per milestone; `Workspace.snapshotVersion` and `NormalizedRecord` land in M3; `Chart`/`ChartFilter`/`EmbedToken` in M5. No destructive migrations assumed.                                                                 | M0 establishes the migration baseline                                                    |
+| **Cost-sensitive**                                | Anthropic token usage (insight/verifier — cache prompts, batch where possible), Notion API calls (paginated + snapshot-cached, never per-filter), Redis aggregation cache (bounded by cardinality caps)                                                   | M2/M3/M5                                                                                 |
+| **Decisions that must not be re-litigated later** | snapshot-not-live filtering (ADR-1), opaque-token-not-JWT for durable embed token (ADR-2), mandatory query-layer tenant scoping (ADR-3)                                                                                                                   | locked in spec                                                                           |
 
 ---
 

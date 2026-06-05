@@ -24,9 +24,11 @@ describe('parseEnv', () => {
   })
 
   it('requires Clerk keys', () => {
-    expect(() => parseEnv({
-      DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
-      NEXT_PUBLIC_APP_URL: 'http://localhost:3000',
-    })).toThrow(/CLERK/)
+    expect(() =>
+      parseEnv({
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
+        NEXT_PUBLIC_APP_URL: 'http://localhost:3000',
+      }),
+    ).toThrow(/CLERK/)
   })
 })

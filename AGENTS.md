@@ -1,7 +1,9 @@
 <!-- BEGIN:nextjs-agent-rules -->
+
 # This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
+
 <!-- END:nextjs-agent-rules -->
 
 # NotionIQ project guide
@@ -13,6 +15,7 @@ AI business analyst for Notion **+** token-gated, filterable charts embedded in 
 > `node_modules/next/dist/docs/` — do not assume older App Router APIs.
 
 ## Sources of truth (read before changing related code)
+
 - Design spec: `docs/superpowers/specs/2026-06-05-notioniq-mvp-design.md`
 - Roadmap: `Plans/00-ROADMAP.md`
 - Per-milestone plans: `Plans/0X-*.md`
@@ -20,17 +23,20 @@ AI business analyst for Notion **+** token-gated, filterable charts embedded in 
 ## Engineering principles — every change must be scalable, secure, maintainable
 
 **Maintainable**
+
 - Small, focused files with one responsibility; split when a file grows unwieldy.
 - Shared zod contracts live in `lib/contracts/` and are imported by both API and embed.
 - Follow existing patterns; don't restructure unrelated code.
 
 **Scalable**
+
 - Chart/filter reads hit the stored snapshot (`NormalizedRecord`), **never** live Notion per interaction.
 - Redis-cache aggregations with deterministic keys: `chartId:workspaceId:normalizedFilterSet:snapshotVersion`.
 - Heavy/async work (scans, AI, reports, scheduled refresh) runs on BullMQ workers.
 - External API calls are paginated with backoff; respect Notion's ~3 req/s limit.
 
 **Secure — treat every change against the OWASP Top 10**
+
 - **A01 Broken Access Control:** mandatory tenant scoping — no data access without a `workspaceId`; verify record ownership on every query; Postgres RLS is a hardening goal.
 - **A02 Cryptographic Failures:** Notion tokens encrypted at rest (AES-GCM, key in a secret manager); durable embed tokens stored only as a SHA-256 hash; never log secrets.
 - **A03 Injection:** Prisma parameterized queries only; zod-validate **every** API and embed input boundary.
@@ -42,11 +48,13 @@ AI business analyst for Notion **+** token-gated, filterable charts embedded in 
 - **A10 SSRF:** validate/allowlist any outbound URLs (embeds, link previews).
 
 ## Testing — non-negotiable
+
 - **TDD:** write a failing test → run it and watch it fail → minimal implementation → run it and watch it pass.
 - **Every PR/change includes tests** for the behavior it adds or fixes. No untested logic merges.
 - Before opening a PR, all of these must pass: `npm run typecheck && npm run lint && npm run test && npm run build`.
 
 ## Commits & branches
+
 - Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `ci:`, `test:`, `refactor:`.
 - **Do NOT put PR numbers or task numbers in commit messages or subjects.** Describe the change itself.
 - One logical change per commit; keep the working tree clean.
@@ -55,6 +63,7 @@ AI business analyst for Notion **+** token-gated, filterable charts embedded in 
 - Branch per milestone/feature (e.g. `m0-foundation`); **never build directly on `main`.**
 
 ## Local commands
+
 - `npm run dev` — app at http://localhost:3000
 - `npm run typecheck` · `npm run lint` · `npm run test` · `npm run build`
 - Env is validated via `lib/env.ts` (`getEnv()`); copy `.env.example` to `.env`.

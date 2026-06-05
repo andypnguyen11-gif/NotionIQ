@@ -1,9 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 
-export function createPrismaSingleton<T>(
-  globalRef: { prisma?: T },
-  factory: () => T,
-): T {
+export function createPrismaSingleton<T>(globalRef: { prisma?: T }, factory: () => T): T {
   if (!globalRef.prisma) {
     globalRef.prisma = factory()
   }
