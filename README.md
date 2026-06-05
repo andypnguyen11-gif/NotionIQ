@@ -21,3 +21,9 @@ AI business analyst for Notion + token-gated, filterable charts embedded in Noti
 - Project conventions: `AGENTS.md`
 - Design spec: `docs/superpowers/specs/2026-06-05-notioniq-mvp-design.md`
 - Roadmap: `Plans/00-ROADMAP.md`
+
+## Ownership
+
+© 2026 andypnguyen11-gif. All rights reserved. Proprietary software — the source is public for
+transparency, but it is not licensed for reuse, redistribution, or modification without the owner's
+permission.
