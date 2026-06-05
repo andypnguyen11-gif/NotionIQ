@@ -487,10 +487,112 @@ git commit -m "ci: add typecheck, test, and build pipeline"
 
 ---
 
+## Task 7: Linting, formatting, and bootstrap README
+
+**Files:**
+- Create: `eslint.config.mjs`, `.prettierrc`, `README.md`
+- Modify: `package.json` (lint/format scripts), `.github/workflows/ci.yml` (add lint step)
+
+- [ ] **Step 1: Install lint + format tooling**
+
+Run:
+```bash
+npm install -D eslint @eslint/js typescript-eslint eslint-config-next prettier
+```
+
+- [ ] **Step 2: Add ESLint flat config**
+
+Create `eslint.config.mjs`:
+```js
+import js from '@eslint/js'
+import tseslint from 'typescript-eslint'
+import next from 'eslint-config-next'
+
+export default tseslint.config(
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  ...next(),
+  { ignores: ['.next/**', 'node_modules/**', 'prisma/generated/**'] },
+)
+```
+
+- [ ] **Step 3: Add Prettier config**
+
+Create `.prettierrc`:
+```json
+{ "semi": false, "singleQuote": true, "printWidth": 100 }
+```
+
+- [ ] **Step 4: Add scripts**
+
+In `package.json` `"scripts"`, add:
+```json
+"lint": "eslint .",
+"format": "prettier --write ."
+```
+
+- [ ] **Step 5: Run lint and fix any reported issues**
+
+Run:
+```bash
+npm run format && npm run lint
+```
+Expected: formatting applied; `eslint .` exits 0 (fix any violations it reports before continuing).
+
+- [ ] **Step 6: Write the bootstrap README**
+
+Create `README.md`:
+```markdown
+# NotionIQ
+
+AI business analyst for Notion + token-gated, filterable charts embedded in Notion pages.
+
+## Local setup
+1. `npm install`
+2. Copy `.env.example` to `.env` and fill in values.
+3. `npx prisma generate`
+4. `npm run dev` — app at http://localhost:3000
+
+## Checks
+- `npm run typecheck` — types
+- `npm run lint` — lint
+- `npm run test` — unit/integration tests
+- `npm run build` — production build
+
+## Docs
+- Design spec: `docs/superpowers/specs/2026-06-05-notioniq-mvp-design.md`
+- Roadmap: `Plans/00-ROADMAP.md`
+```
+
+- [ ] **Step 7: Add the lint step to CI**
+
+In `.github/workflows/ci.yml`, add a `- run: npm run lint` step immediately after `npm run typecheck`.
+
+- [ ] **Step 8: Verify the full CI sequence locally, then commit**
+
+Run:
+```bash
+npm run typecheck && npm run lint && npm run test && npm run build
+```
+Expected: all four succeed.
+```bash
+git add -A
+git commit -m "chore: add eslint, prettier, and bootstrap readme"
+```
+
+---
+
 ## Definition of done (M0)
 
-- `npm run typecheck`, `npm run test`, and `npm run build` all pass.
-- `GET /api/health` returns `{ status: 'ok', timestamp }`.
-- Missing/invalid env vars throw a clear error at boot (`parseEnv`).
-- `/app/*` routes require authentication; the marketing root is public.
-- CI runs the same checks on every push/PR.
+All criteria must be objectively verifiable:
+
+- [ ] `npm run typecheck` passes (no type errors).
+- [ ] `npm run lint` passes (exit 0).
+- [ ] `npm run test` passes (all Vitest suites green).
+- [ ] `npm run build` produces a successful production build.
+- [ ] `GET /api/health` returns `{ status: 'ok', timestamp }`.
+- [ ] Missing/invalid env vars throw a clear error via `parseEnv` (covered by `lib/env.test.ts`).
+- [ ] `/app/*` routes require authentication; the marketing root is public.
+- [ ] CI workflow runs typecheck → lint → test → build on every push/PR (wired in `.github/workflows/ci.yml`).
+- [ ] `README.md` documents local setup and the check commands.
+- [ ] `git status` is clean and all M0 work is committed.

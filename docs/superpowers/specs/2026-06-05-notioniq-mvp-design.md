@@ -73,6 +73,27 @@ cookie). All subsequent data fetches use the short-lived token.
 - **Optional hygiene re-mint:** a 90-day re-mint MAY be piggybacked on the Pro scheduled-refresh job
   (which already rewrites report content); never a hard TTL that can orphan an embedded chart.
 
+**Storage, format, rotation, audit (durable token):**
+- **Format:** opaque, high-entropy random (≥256 bits), **not** a JWT. A durable JWT is
+  self-validating and cannot be cheaply revoked — which is exactly the failure mode we rejected.
+  An opaque token is validated by DB lookup, so revocation is immediate.
+- **At rest:** store only a **SHA-256 hash** of the token (`tokenHash`). The raw token lives only in
+  the Notion embed `src`. A database leak therefore yields no usable tokens.
+- **Access token:** the short-lived (60–120s) exchange token **is** a signed JWT — stateless, so the
+  data API validates it without a DB round-trip on every aggregation call.
+- **Revocation latency:** each iframe load re-checks the durable token against the DB during exchange,
+  so a revoked durable token stops minting access tokens **immediately**; already-issued access
+  tokens remain valid only until their ≤120s TTL. **Worst-case revocation latency = the access-token
+  TTL.** The aggregation cache is keyed by data (`snapshotVersion`), not auth, so revocation requires
+  no cache purge.
+- **Rotation triggers:** leak suspicion, workspace disconnect, or manual regenerate → revoke + rewrite
+  the embed block with a freshly minted token. Optional 90-day hygiene re-mint (above).
+- **Audit:** mint / exchange / revoke events are logged with `workspaceId`, `chartId`, timestamp, and
+  request IP, to the structured logger + PostHog.
+
+**Assumptions made explicit:** durable embed links are expected to remain stable indefinitely (the
+norm for Notion embeds); revocation is near-real-time and bounded by the access-token TTL above.
+
 ### ADR-3 — Tenant isolation at two layers
 1. **Query-builder layer (mandatory):** every data-access path is scoped by `workspaceId`; no query
    may be issued without it. Enforced in a thin data-access module, not scattered through handlers.
@@ -143,7 +164,8 @@ Viewer opens Notion page
 - **`Chart`** — `workspaceId`, `type`, `sourceMapping`, `metricRef`, `snapshotVersionAtCreate`.
 - **`ChartFilter`** — `chartId`, `field`, `operator`, `source` (`ai_suggested | user_added`),
   `enabled`, `defaultValue`, `cardinalityMode` (`multiselect | typeahead`).
-- **`EmbedToken`** — durable revocable URL token record: `chartId`, `workspaceId`, `revokedAt`
+- **`EmbedToken`** — durable revocable URL token record: `chartId`, `workspaceId`, `tokenHash`
+  (SHA-256 of the opaque token — raw token never stored), `createdAt`, `lastRotatedAt`, `revokedAt`
   (the short-lived access token is stateless/JWT, not stored).
 - **Workspace** gains `snapshotVersion` (int, bumped each scan).
 
@@ -196,6 +218,12 @@ Report, Insight, ActionItem.
 
 Enforced by the Entitlements service at the **API and job layers** (not UI alone): chart count,
 filterability, saved/custom filters, scheduled refresh, and business memory are gated per Section 2.
+
+**Conversion instrumentation (PostHog, from day one):** to validate pricing quickly, instrument at
+least three events — (1) `chart_cap_reached` (Free user blocked from adding a 2nd chart),
+(2) `filter_interaction_attempted` (Free user clicks a disabled filter control — intent signal),
+(3) `manual_refresh_clicked` frequency (proxy for desired refresh cadence). These three map directly
+to the Free→Pro boundary in Section 2.
 
 ---
 
