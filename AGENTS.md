@@ -47,6 +47,14 @@ AI business analyst for Notion **+** token-gated, filterable charts embedded in 
 - **A09 Logging/Monitoring:** structured logs + audit trail for token mint/exchange/revoke; never log PII or secrets.
 - **A10 SSRF:** validate/allowlist any outbound URLs (embeds, link previews).
 
+## Secrets — never commit them
+
+- **Never hardcode or commit secrets** (API keys, tokens, client secrets, DB passwords, signing keys, webhook secrets) in source, tests, fixtures, config, or docs. No exceptions.
+- Read every secret from the environment via `lib/env.ts` (`getEnv()`); add new ones to the zod schema and to `.env.example` with a **placeholder** value only.
+- Real values live in untracked `.env` (gitignored) locally and in the host's secret manager / encrypted CI secrets in deploy (Vercel/GitHub Actions secrets). The Notion OAuth token is additionally encrypted at rest (AES-GCM) — see A02.
+- If a secret is ever committed, treat it as compromised: rotate it immediately, then scrub history.
+- The only key-shaped strings allowed in the repo are obvious **non-functional placeholders** (e.g. Clerk's `pk_test_Y2xlcmsuZXhhbXBsZS5jb20k` build dummy). Never a working credential.
+
 ## Testing — non-negotiable
 
 - **TDD:** write a failing test → run it and watch it fail → minimal implementation → run it and watch it pass.
