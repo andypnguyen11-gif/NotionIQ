@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { parseEnv } from './env'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { parseEnv, getEnv } from './env'
 
 const valid = {
   DATABASE_URL: 'postgresql://user:pass@localhost:5432/db',
@@ -30,5 +30,19 @@ describe('parseEnv', () => {
         NEXT_PUBLIC_APP_URL: 'http://localhost:3000',
       }),
     ).toThrow(/CLERK/)
+  })
+})
+
+describe('getEnv', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('memoizes: repeated calls return the same cached object', () => {
+    vi.stubEnv('DATABASE_URL', 'postgresql://user:pass@localhost:5432/db')
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')
+    vi.stubEnv('NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', 'pk_test_x')
+    vi.stubEnv('CLERK_SECRET_KEY', 'sk_test_x')
+    const a = getEnv()
+    const b = getEnv()
+    expect(a).toBe(b)
   })
 })
