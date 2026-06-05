@@ -15,7 +15,9 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
 // request time. The Prisma 7 driver-adapter engine requires an adapter at construction.
 export function getPrisma(): PrismaClient {
   return createPrismaSingleton(globalForPrisma, () => {
-    const adapter = new PrismaPg(getEnv().DATABASE_URL)
+    // Bounded pool: on serverless (Vercel) each instance opens its own pool, so cap it
+    // rather than using pg's default max of 10. Use a pooled (PgBouncer/Neon -pooler) URL in prod.
+    const adapter = new PrismaPg({ connectionString: getEnv().DATABASE_URL, max: 5 })
     return new PrismaClient({ adapter })
   })
 }
