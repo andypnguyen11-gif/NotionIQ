@@ -34,6 +34,7 @@ describe('GET /api/notion/connect', () => {
     const cookie = res.cookies.get(OAUTH_NONCE_COOKIE)
     expect(cookie?.value).toBe(payload?.n)
     expect(cookie?.httpOnly).toBe(true)
+    expect(cookie?.secure).toBe(true) // https deployment → Secure cookie
   })
 
   it('redirects an unauthenticated user to sign-in', async () => {
