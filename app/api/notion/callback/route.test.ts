@@ -58,6 +58,14 @@ describe('GET /api/notion/callback', () => {
     expect(exchangeCodeForToken).not.toHaveBeenCalled()
   })
 
+  it('clears the nonce cookie even when redirecting an unauthenticated user to sign-in', async () => {
+    mockedAuth.mockResolvedValue({ userId: null } as never)
+    const state = signState({ u: 'user_123', n: 'nonce-A', e: Date.now() + 60_000 }, SECRET)
+    const res = await GET(reqWith({ code: 'abc', state }, 'nonce-A'))
+    expect(res.headers.get('location')).toBe('https://app.test/sign-in')
+    expect(res.cookies.get(OAUTH_NONCE_COOKIE)?.value).toBe('') // consumed on every exit
+  })
+
   it('exchanges, persists encrypted token, clears the cookie, and redirects on a valid callback', async () => {
     mockedAuth.mockResolvedValue({ userId: 'user_123' } as never)
     exchangeCodeForToken.mockResolvedValue({
@@ -74,7 +82,10 @@ describe('GET /api/notion/callback', () => {
     const [, savedInput] = (saveNotionConnection.mock.calls[0] as unknown) as [unknown, { encryptedToken: string; userId: string }]
     expect(savedInput.userId).toBe('user_123')
     expect(savedInput.encryptedToken).not.toContain('tok') // stored encrypted, never plaintext
-    // cookie cleared (maxAge 0)
-    expect(res.cookies.get(OAUTH_NONCE_COOKIE)?.value).toBe('')
+    // cookie cleared (maxAge 0) with the same attributes it was set with
+    const cleared = res.cookies.get(OAUTH_NONCE_COOKIE)
+    expect(cleared?.value).toBe('')
+    expect(cleared?.secure).toBe(true) // https deployment → Secure on the clear too
+    expect(cleared?.httpOnly).toBe(true)
   })
 })

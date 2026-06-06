@@ -8,10 +8,21 @@ import { verifyState, OAUTH_NONCE_COOKIE } from '@/lib/notion/oauth-state'
 import { encryptToken } from '@/lib/crypto/token-cipher'
 import { saveNotionConnection } from '@/lib/data/connections'
 
-function redirectToApp(appUrl: string, status: string): NextResponse {
-  const res = NextResponse.redirect(new URL(`/app?notion=${status}`, appUrl))
-  res.cookies.set(OAUTH_NONCE_COOKIE, '', { path: '/', maxAge: 0 }) // consume the nonce
+// Clear the single-use nonce, mirroring the attributes connect set it with so the
+// browser reliably drops it. `secure` is scoped to https for local-dev parity.
+function clearNonce(res: NextResponse, appUrl: string): NextResponse {
+  res.cookies.set(OAUTH_NONCE_COOKIE, '', {
+    httpOnly: true,
+    secure: appUrl.startsWith('https://'),
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 0,
+  })
   return res
+}
+
+function redirectToApp(appUrl: string, status: string): NextResponse {
+  return clearNonce(NextResponse.redirect(new URL(`/app?notion=${status}`, appUrl)), appUrl)
 }
 
 export async function GET(req: NextRequest) {
@@ -31,7 +42,7 @@ export async function GET(req: NextRequest) {
 
   const { userId } = await auth()
   if (!userId) {
-    return NextResponse.redirect(new URL('/sign-in', appUrl))
+    return clearNonce(NextResponse.redirect(new URL('/sign-in', appUrl)), appUrl)
   }
 
   const payload = verifyState(state, env.OAUTH_STATE_SECRET, Date.now())
