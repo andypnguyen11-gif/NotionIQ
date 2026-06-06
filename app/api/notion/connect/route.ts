@@ -30,7 +30,9 @@ export async function GET() {
   const res = NextResponse.redirect(authorizeUrl)
   res.cookies.set(OAUTH_NONCE_COOKIE, nonce, {
     httpOnly: true,
-    secure: true,
+    // Scope `secure` to HTTPS deployments: a `Secure` cookie is dropped over
+    // plain-http localhost, which would break the callback in local dev.
+    secure: env.NEXT_PUBLIC_APP_URL.startsWith('https://'),
     sameSite: 'lax', // sent on the top-level GET redirect back from Notion
     path: '/',
     maxAge: STATE_TTL_MS / 1000,
