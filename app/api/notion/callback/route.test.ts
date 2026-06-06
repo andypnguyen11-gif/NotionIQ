@@ -35,6 +35,22 @@ function reqWith(params: Record<string, string>, nonceCookie?: string): NextRequ
 describe('GET /api/notion/callback', () => {
   beforeEach(() => vi.clearAllMocks())
 
+  it('redirects to /app?notion=denied when Notion returns an error (user declined)', async () => {
+    mockedAuth.mockResolvedValue({ userId: 'user_123' } as never)
+    const res = await GET(reqWith({ error: 'access_denied' }))
+    expect(res.headers.get('location')).toBe('https://app.test/app?notion=denied')
+    expect(exchangeCodeForToken).not.toHaveBeenCalled()
+  })
+
+  it('redirects to /app?notion=error when the token exchange throws', async () => {
+    mockedAuth.mockResolvedValue({ userId: 'user_123' } as never)
+    exchangeCodeForToken.mockRejectedValue(new Error('notion 500'))
+    const state = signState({ u: 'user_123', n: 'nonce-A', e: Date.now() + 60_000 }, SECRET)
+    const res = await GET(reqWith({ code: 'abc', state }, 'nonce-A'))
+    expect(res.headers.get('location')).toBe('https://app.test/app?notion=error')
+    expect(saveNotionConnection).not.toHaveBeenCalled()
+  })
+
   it('redirects to /app?notion=invalid when code or state is missing', async () => {
     mockedAuth.mockResolvedValue({ userId: 'user_123' } as never)
     const res = await GET(reqWith({ code: 'abc' })) // no state
