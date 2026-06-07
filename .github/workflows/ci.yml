@@ -7,11 +7,33 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    services:
+      # Real ephemeral Postgres so the db-health integration test (gated on
+      # DATABASE_URL) can actually connect. Credentials match DATABASE_URL below.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DATABASE_URL: postgresql://user:pass@localhost:5432/db
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2xlcmsuZXhhbXBsZS5jb20k
       CLERK_SECRET_KEY: sk_test_clerkplaceholdersecretkey00000000
+      # Non-functional placeholders — CI never performs a real OAuth handshake.
+      NOTION_OAUTH_CLIENT_ID: test-notion-client-id
+      NOTION_OAUTH_CLIENT_SECRET: test-notion-client-secret
+      NOTION_OAUTH_REDIRECT_URI: http://localhost:3000/api/notion/callback
+      TOKEN_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      OAUTH_STATE_SECRET: ci-only-not-a-real-state-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,6 +42,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      - run: npx prisma migrate deploy
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test
