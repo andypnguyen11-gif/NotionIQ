@@ -11,6 +11,8 @@ const valid = {
   NOTION_OAUTH_REDIRECT_URI: 'http://localhost:3000/api/notion/callback',
   TOKEN_ENCRYPTION_KEY: 'Z'.repeat(44),
   OAUTH_STATE_SECRET: 'a-sufficiently-long-state-secret',
+  ANTHROPIC_API_KEY: 'sk-ant-test',
+  REDIS_URL: 'redis://localhost:6379',
 }
 
 describe('parseEnv', () => {
@@ -60,9 +62,21 @@ describe('parseEnv', () => {
       NOTION_OAUTH_REDIRECT_URI: 'https://app.test/api/notion/callback',
       TOKEN_ENCRYPTION_KEY: 'Z'.repeat(44), // base64-ish placeholder; 32-byte length checked at use site
       OAUTH_STATE_SECRET: 'a-sufficiently-long-state-secret',
+      ANTHROPIC_API_KEY: 'sk-ant-test',
+      REDIS_URL: 'redis://localhost:6379',
     })
     expect(env.NOTION_OAUTH_CLIENT_ID).toBe('cid')
     expect(env.OAUTH_STATE_SECRET).toBe('a-sufficiently-long-state-secret')
+  })
+
+  it('accepts the M2 anthropic + redis vars', () => {
+    const env = parseEnv({
+      ...valid,
+      ANTHROPIC_API_KEY: 'sk-ant-test',
+      REDIS_URL: 'redis://localhost:6379',
+    })
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-test')
+    expect(env.REDIS_URL).toBe('redis://localhost:6379')
   })
 })
 
@@ -79,6 +93,8 @@ describe('getEnv', () => {
     vi.stubEnv('NOTION_OAUTH_REDIRECT_URI', 'http://localhost:3000/api/notion/callback')
     vi.stubEnv('TOKEN_ENCRYPTION_KEY', 'Z'.repeat(44))
     vi.stubEnv('OAUTH_STATE_SECRET', 'a-sufficiently-long-state-secret')
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test')
+    vi.stubEnv('REDIS_URL', 'redis://localhost:6379')
     const a = getEnv()
     const b = getEnv()
     expect(a).toBe(b)
