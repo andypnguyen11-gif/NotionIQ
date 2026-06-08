@@ -55,6 +55,14 @@ export async function getWorkspaceForUser(prisma: PrismaClient, userId: string) 
   })
 }
 
+export async function getConnectionForUser(prisma: PrismaClient, userId: string) {
+  const workspace = await prisma.workspace.findFirst({
+    where: { members: { some: { userId } } },
+    include: { notionConnection: true },
+  })
+  return workspace?.notionConnection ?? null
+}
+
 export async function disconnectNotion(prisma: PrismaClient, userId: string): Promise<boolean> {
   const workspace = await prisma.workspace.findFirst({
     where: { members: { some: { userId } } },
