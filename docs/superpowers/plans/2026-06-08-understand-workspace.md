@@ -1881,7 +1881,7 @@ Install:
 npm install bullmq ioredis
 ```
 
-This task is thin glue. We unit-test only the pure pieces (`buildScanDeps` wiring shape and the enqueue payload); the BullMQ `Worker`/`Queue` construction is not unit-tested (it requires Redis and is covered by the e2e/manual smoke).
+This task is thin glue. **The only unit test here covers the queue-name constant and the `scanJobPayload` shape.** The BullMQ `Queue`/`Worker` construction and the `buildScanDeps` wiring need a live Redis + decrypted token and are intentionally NOT unit-tested — they are verified by `npm run typecheck` and the manual smoke in Final Verification. (Do not claim the wiring is unit-tested; it is not.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2022,6 +2022,8 @@ git commit -m "feat(jobs): wire bullmq scan queue and worker"
 - Test: `app/api/notion/databases/route.test.ts`
 
 Helper for resolving the caller's workspace + decrypted token is reused by routes; add `getConnectionForUser` to `lib/data/connections.ts`.
+
+> **Security note (token decryption scope):** the Notion token is decrypted in **server-only Notion read paths — the list route AND the worker** — never in the client/iframe. Synchronous listing legitimately decrypts server-side here (consistent with spec A02: "decrypt only in server-side scanner/analytics paths"). The token never crosses to the browser; only the minimal `{ id, title, icon, lastEditedTime }` list is returned.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2519,7 +2521,145 @@ git commit -m "feat(mappings): add approve endpoint with derived run approval"
 
 ---
 
-## Task 20: Review UI view-model (pure)
+## Task 20: GET /api/mappings (list proposals for a scan run)
+
+**Files:**
+- Modify: `lib/data/mappings.ts` (add `listMappingsForRun`)
+- Modify: `lib/data/mappings.test.ts` (add a case)
+- Create: `app/api/mappings/route.ts`
+- Create: `app/api/mappings/route.test.ts`
+
+This closes the product-flow hole: the review UI needs the proposals to render and approve. The poll endpoint returns only progress; this endpoint returns the per-database mappings for a finished run.
+
+- [ ] **Step 1: Write the failing data test**
+
+Add to `lib/data/mappings.test.ts`:
+
+```ts
+import { listMappingsForRun } from './mappings'
+
+describe('listMappingsForRun', () => {
+  it('lists mappings for a run, tenant-scoped', async () => {
+    const findMany = vi.fn(async () => [{ id: 'm1', notionDatabaseId: 'db1', databaseName: 'Sales', status: 'proposed', proposedMapping: {}, approvedMapping: null }])
+    const prisma = { databaseMapping: { findMany } } as unknown as import('@prisma/client').PrismaClient
+    const rows = await listMappingsForRun(prisma, { workspaceId: 'ws_1', scanRunId: 'run_1' })
+    expect(rows).toHaveLength(1)
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: 'ws_1', lastScanRunId: 'run_1' } }))
+  })
+})
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `npx vitest run lib/data/mappings.test.ts` → FAIL (`listMappingsForRun` not exported).
+
+- [ ] **Step 3: Implement the data function**
+
+Add to `lib/data/mappings.ts`:
+
+```ts
+export async function listMappingsForRun(
+  prisma: PrismaClient,
+  args: { workspaceId: string; scanRunId: string },
+) {
+  return prisma.databaseMapping.findMany({
+    where: { workspaceId: args.workspaceId, lastScanRunId: args.scanRunId },
+    select: { id: true, notionDatabaseId: true, databaseName: true, status: true, proposedMapping: true, approvedMapping: true },
+    orderBy: { databaseName: 'asc' },
+  })
+}
+```
+
+- [ ] **Step 4: Write the failing route test**
+
+`app/api/mappings/route.test.ts`:
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+vi.mock('@clerk/nextjs/server', () => ({ auth: vi.fn() }))
+vi.mock('@/lib/prisma', () => ({ getPrisma: () => ({}) }))
+const getWorkspaceForUser = vi.fn()
+vi.mock('@/lib/data/connections', () => ({ getWorkspaceForUser: (...a: unknown[]) => getWorkspaceForUser(...a) }))
+const listMappingsForRun = vi.fn()
+vi.mock('@/lib/data/mappings', () => ({ listMappingsForRun: (...a: unknown[]) => listMappingsForRun(...a) }))
+
+import type { NextRequest } from 'next/server'
+import { auth } from '@clerk/nextjs/server'
+import { GET } from './route'
+const mockedAuth = vi.mocked(auth)
+const req = (url: string) => new Request(url) as unknown as NextRequest
+
+describe('GET /api/mappings', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('401 when unauthenticated', async () => {
+    mockedAuth.mockResolvedValue({ userId: null } as never)
+    expect((await GET(req('https://app.test/api/mappings?scanRunId=run_1'))).status).toBe(401)
+  })
+
+  it('400 when scanRunId is missing', async () => {
+    mockedAuth.mockResolvedValue({ userId: 'u1' } as never)
+    getWorkspaceForUser.mockResolvedValue({ id: 'ws_1' })
+    expect((await GET(req('https://app.test/api/mappings'))).status).toBe(400)
+  })
+
+  it('returns mappings for the run', async () => {
+    mockedAuth.mockResolvedValue({ userId: 'u1' } as never)
+    getWorkspaceForUser.mockResolvedValue({ id: 'ws_1' })
+    listMappingsForRun.mockResolvedValue([{ id: 'm1', notionDatabaseId: 'db1', databaseName: 'Sales', status: 'proposed', proposedMapping: {}, approvedMapping: null }])
+    const res = await GET(req('https://app.test/api/mappings?scanRunId=run_1'))
+    expect(res.status).toBe(200)
+    expect((await res.json()).mappings).toHaveLength(1)
+  })
+})
+```
+
+- [ ] **Step 5: Run it and watch it fail**
+
+Run: `npx vitest run app/api/mappings/route.test.ts` → FAIL (module not found).
+
+- [ ] **Step 6: Implement the route**
+
+`app/api/mappings/route.ts`:
+
+```ts
+import type { NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
+import { auth } from '@clerk/nextjs/server'
+import { getPrisma } from '@/lib/prisma'
+import { getWorkspaceForUser } from '@/lib/data/connections'
+import { listMappingsForRun } from '@/lib/data/mappings'
+
+export async function GET(req: NextRequest) {
+  const { userId } = await auth()
+  if (!userId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  const scanRunId = new URL(req.url).searchParams.get('scanRunId')
+  const prisma = getPrisma()
+  const workspace = await getWorkspaceForUser(prisma, userId)
+  if (!workspace) return NextResponse.json({ error: 'no_workspace' }, { status: 400 })
+  if (!scanRunId) return NextResponse.json({ error: 'invalid_request' }, { status: 400 })
+
+  const mappings = await listMappingsForRun(prisma, { workspaceId: workspace.id, scanRunId })
+  return NextResponse.json({ mappings })
+}
+```
+
+- [ ] **Step 7: Run it and watch it pass**
+
+Run: `npx vitest run lib/data/mappings.test.ts app/api/mappings/route.test.ts` → PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add lib/data/mappings.ts lib/data/mappings.test.ts app/api/mappings/route.ts app/api/mappings/route.test.ts
+git commit -m "feat(mappings): add list endpoint for scan run proposals"
+```
+
+---
+
+## Task 21: Review UI view-model (pure)
 
 **Files:**
 - Create: `app/app/scan/scan-view.ts`
@@ -2539,7 +2679,7 @@ describe('scan-view', () => {
     expect(scanProgressLabel({ status: 'proposed', results: [
       { notionDatabaseId: 'a', status: 'mapped' },
       { notionDatabaseId: 'b', status: 'failed' },
-    ] })).toBe('2 mapped, 1 failed')
+    ] })).toBe('1 mapped, 1 failed')
   })
 
   it('is reviewable only once proposed or approved', () => {
@@ -2633,14 +2773,14 @@ git commit -m "feat(app): add scan review view-model helpers"
 
 ---
 
-## Task 21: Review UI components + page wiring
+## Task 22: Review UI components + page wiring
 
 **Files:**
 - Create: `app/app/scan/page.tsx` (server component: lists databases, renders client island)
 - Create: `app/app/scan/scan-client.tsx` (client island: selection, trigger, poll, review, approve)
 - Modify: `app/app/page.tsx` (add a "Scan workspace" link when connected)
 
-This task is presentational glue over already-tested logic/endpoints; there is no new pure logic to unit-test (the Node test env has no RTL — see spec §10). Verify via typecheck + build + manual smoke.
+This task is presentational glue over already-tested logic/endpoints; there is no new pure logic to unit-test (the Node test env has no RTL — see spec §10). Verify via typecheck + build + manual smoke. **Every imported helper/type below must be used** (ESLint `@typescript-eslint/no-unused-vars` fails the lint gate otherwise) — the review table consumes `fieldRowsForReview`, `ReviewRow`, and `Role`.
 
 - [ ] **Step 1: Implement the server page**
 
@@ -2679,18 +2819,31 @@ export default async function ScanPage() {
 
 ```tsx
 'use client'
-import { useEffect, useState } from 'react'
-import { fieldRowsForReview, scanProgressLabel, isReviewable, type ReviewRow } from './scan-view'
+import { useCallback, useEffect, useState } from 'react'
+import { fieldRowsForReview, scanProgressLabel, isReviewable } from './scan-view'
 import type { DatabaseMappingProposal, Role } from '@/lib/contracts/mapping'
 
 interface DbItem { id: string; title: string }
+interface MappingRow {
+  id: string
+  notionDatabaseId: string
+  databaseName: string
+  status: string
+  proposedMapping: DatabaseMappingProposal
+}
+type DbResult = { notionDatabaseId: string; status: 'scanned' | 'mapped' | 'failed' }
+const ROLES: Role[] = ['date', 'measure', 'dimension', 'status', 'title', 'ignore']
 
 export function ScanClient() {
   const [dbs, setDbs] = useState<DbItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scanRunId, setScanRunId] = useState<string | null>(null)
   const [status, setStatus] = useState<string>('idle')
-  const [results, setResults] = useState<{ notionDatabaseId: string; status: 'scanned' | 'mapped' | 'failed' }[]>([])
+  const [results, setResults] = useState<DbResult[]>([])
+  const [mappings, setMappings] = useState<MappingRow[]>([])
+  // per-mapping local edits: { [mappingId]: { occurredAtPropertyId, roles } }
+  const [edits, setEdits] = useState<Record<string, { occurredAtPropertyId: string | null; roles: Record<string, Role> }>>({})
+  const [approved, setApproved] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetch('/api/notion/databases').then((r) => r.json()).then((d) => setDbs(d.databases ?? []))
@@ -2706,6 +2859,24 @@ export function ScanClient() {
     return () => clearInterval(t)
   }, [scanRunId, status])
 
+  // When the run is reviewable, load the proposals and seed edit state from the AI roles.
+  const loadMappings = useCallback(async (runId: string) => {
+    const { mappings: rows } = await fetch(`/api/mappings?scanRunId=${runId}`).then((x) => x.json())
+    setMappings(rows)
+    const seeded: typeof edits = {}
+    for (const m of rows as MappingRow[]) {
+      seeded[m.id] = {
+        occurredAtPropertyId: m.proposedMapping.occurredAtPropertyId,
+        roles: Object.fromEntries(m.proposedMapping.fields.map((f) => [f.notionPropertyId, f.role])),
+      }
+    }
+    setEdits(seeded)
+  }, [])
+
+  useEffect(() => {
+    if (scanRunId && isReviewable(status)) void loadMappings(scanRunId)
+  }, [scanRunId, status, loadMappings])
+
   async function startScan() {
     const res = await fetch('/api/scan', {
       method: 'POST',
@@ -2717,40 +2888,98 @@ export function ScanClient() {
     setStatus('queued')
   }
 
+  async function approve(mappingId: string) {
+    const res = await fetch(`/api/mappings/${mappingId}/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(edits[mappingId]),
+    })
+    if (res.ok) setApproved((prev) => new Set(prev).add(mappingId))
+  }
+
+  function setRole(mappingId: string, propId: string, role: Role) {
+    setEdits((prev) => ({ ...prev, [mappingId]: { ...prev[mappingId], roles: { ...prev[mappingId].roles, [propId]: role } } }))
+  }
+
   return (
-    <div className="space-y-4">
-      <ul className="space-y-1">
-        {dbs.map((db) => (
-          <li key={db.id}>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={selected.has(db.id)}
-                onChange={(e) => {
-                  const next = new Set(selected)
-                  e.target.checked ? next.add(db.id) : next.delete(db.id)
-                  setSelected(next)
-                }}
-              />
-              {db.title}
-            </label>
-          </li>
-        ))}
-      </ul>
-      <button
-        disabled={selected.size === 0 || (scanRunId !== null && !isReviewable(status) && status !== 'failed')}
-        onClick={startScan}
-        className="rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
-      >
-        Scan selected
-      </button>
+    <div className="space-y-6">
+      {!isReviewable(status) && (
+        <>
+          <ul className="space-y-1">
+            {dbs.map((db) => (
+              <li key={db.id}>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(db.id)}
+                    onChange={(e) => {
+                      const next = new Set(selected)
+                      if (e.target.checked) next.add(db.id)
+                      else next.delete(db.id)
+                      setSelected(next)
+                    }}
+                  />
+                  {db.title}
+                </label>
+              </li>
+            ))}
+          </ul>
+          <button
+            disabled={selected.size === 0 || (scanRunId !== null && status !== 'failed')}
+            onClick={startScan}
+            className="rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
+          >
+            Scan selected
+          </button>
+        </>
+      )}
+
       {scanRunId && <p role="status" className="text-sm text-gray-600">{scanProgressLabel({ status, results })}</p>}
+
+      {isReviewable(status) &&
+        mappings.map((m) => {
+          const rows = fieldRowsForReview({ ...m.proposedMapping, occurredAtPropertyId: edits[m.id]?.occurredAtPropertyId ?? null })
+          return (
+            <section key={m.id} className="space-y-2 rounded border p-4">
+              <h2 className="font-medium">{m.databaseName} <span className="text-xs text-gray-500">({m.proposedMapping.classification})</span></h2>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-gray-500">
+                    <th>Property</th><th>Notion type</th><th>Context</th><th>Role</th><th>AI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.id} className={row.flagged ? 'bg-amber-50' : ''}>
+                      <td>{row.name}{row.isOccurredAt && <span className="ml-1 text-xs text-blue-700">(timeline)</span>}</td>
+                      <td>{row.notionType}</td>
+                      <td className="text-xs text-gray-500">{row.optionNames?.join(', ') ?? row.relationTargetName ?? ''}</td>
+                      <td>
+                        <select value={edits[m.id]?.roles[row.id] ?? row.role} onChange={(e) => setRole(m.id, row.id, e.target.value as Role)}>
+                          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                        </select>
+                      </td>
+                      <td className="text-xs text-gray-400" title={row.rationale}>{Math.round(row.confidence * 100)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <button
+                onClick={() => approve(m.id)}
+                disabled={approved.has(m.id)}
+                className="rounded bg-black px-3 py-1.5 text-sm text-white disabled:opacity-50"
+              >
+                {approved.has(m.id) ? 'Approved' : 'Approve mapping'}
+              </button>
+            </section>
+          )
+        })}
     </div>
   )
 }
 ```
 
-> The per-database mapping review table (rendering `fieldRowsForReview` with role dropdowns and a POST to `/api/mappings/[id]/approve`) attaches here once proposals are exposed via a mappings-list endpoint. For this task, the picker + scan-trigger + progress is the working slice; the review table is wired in the same component using the already-tested `fieldRowsForReview` helper. Keep `ReviewRow`, `DatabaseMappingProposal`, `Role` imports for that table.
+This uses every import: `fieldRowsForReview`, `scanProgressLabel`, `isReviewable` from the view-model, and `DatabaseMappingProposal` + `Role` from the contract. The `occurredAt` selection here defaults to the AI's choice; a richer "pick the timeline" control can come later — the approve payload already carries `occurredAtPropertyId`, validated server-side by `applyEdits`.
 
 - [ ] **Step 3: Add a link from the app home**
 
@@ -2784,8 +3013,10 @@ git commit -m "feat(app): add workspace scan and review ui"
 
 ## Self-Review (plan vs. spec)
 
-**Spec coverage:** §2 list endpoint → Task 16; select-then-scan → Tasks 16/17/21; D-1 BullMQ thin boundary → Tasks 15/17/18; D-3 hand-rolled client + version isolation → Task 3; D-4 deterministic prior + AI refine → Tasks 6/10; D-5 lean taxonomy → Task 7; D-6 samples transient → Tasks 4/8 (no persistence of `sample`); D-7 plain orchestration + metadata-only logging → Tasks 10/14; D-8 current-state mapping + schema-hash gate + derived approval → Tasks 1/5/13/19; rationale containment → Task 10; sample bounds → Task 4; data model → Task 1; security guards → Tasks 16–19; testing strategy → every task's tests. **No gaps.**
+**Spec coverage:** §2 list endpoint → Task 16; select-then-scan → Tasks 16/17/22; review proposal retrieval → Task 20; review/approve UI → Tasks 21/22; D-1 BullMQ thin boundary → Tasks 15/17/18; D-3 hand-rolled client + version isolation → Task 3; D-4 deterministic prior + AI refine → Tasks 6/10; D-5 lean taxonomy → Task 7; D-6 samples transient → Tasks 4/8 (no persistence of `sample`); D-7 plain orchestration + metadata-only logging → Tasks 10/14; D-8 current-state mapping + schema-hash gate + derived approval → Tasks 1/5/13/19; rationale containment → Task 10; sample bounds → Task 4; data model → Task 1; security guards → Tasks 16–20 (token decrypted only in server read paths: list route + worker). **No gaps** — the mapping-retrieval hole (proposals → review → approve) is closed by Task 20.
 
-**Type consistency:** `Role`, `FieldMapping`, `DatabaseMappingProposal` defined in Task 7 and used identically in 6/10/11/13/19/20; `ScannedProperty`/`ScannedSchema`/`RawRow` from Task 3 used in 4/5/8; `ScannedDatabase` from Task 8 used in 10/14; `DbResult` from Task 12 used in 13/14; `RunScanDeps` from Task 14 consumed in 15. `candidateRole` name consistent. **Consistent.**
+**Type consistency:** `Role`, `FieldMapping`, `DatabaseMappingProposal` defined in Task 7 and used identically in 6/10/11/13/19/20/22; `ScannedProperty`/`ScannedSchema`/`RawRow` from Task 3 used in 4/5/8; `ScannedDatabase` from Task 8 used in 10/14; `DbResult` from Task 12 used in 13/14; `RunScanDeps` from Task 14 consumed in 15; `ReviewRow`/`fieldRowsForReview` from Task 21 consumed in Task 22. `candidateRole` name consistent. **Consistent.**
 
 **Note on ordering:** Task 6 (`candidate-rules`) imports `Role` from Task 7's contract — implement Task 7 first or together (called out inline in Task 6).
+
+**Total: 22 tasks.**
