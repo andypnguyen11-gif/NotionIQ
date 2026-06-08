@@ -154,7 +154,10 @@ and transitions the run when the condition is met. (Failed databases do not bloc
 are surfaced in `results` for the user to re-scan.)
 
 **Re-scan vs. an existing approval (schema-hash gated).** Each `DatabaseMapping` stores a
-`schemaHash` (stable hash of property ids + types + option sets). On re-scan:
+`schemaHash` (stable hash of property ids + types + option sets). **The hash is computed from the
+full, untruncated Notion schema — complete option sets and all properties — before any mapper/UI
+bounding** (`MAX_PROPERTIES`, `MAX_OPTION_NAMES`). Otherwise a change beyond those caps (e.g. the
+51st status option) could fail to invalidate an existing approval. On re-scan:
 - **`schemaHash` unchanged** → the database's structure is the same; we refresh `proposedMapping`
   but **preserve `approvedMapping` and keep `status = approved`** (no needless re-review).
 - **`schemaHash` changed** (properties added/removed/retyped, options changed) → the prior approval
@@ -205,13 +208,14 @@ Each unit has one responsibility, a typed interface, and is independently testab
   re-prompt** including the validation error; if it still fails, the database's result is `failed`
   with an `errorCode` — a bad mapping is **never** silently accepted. Logs model/latency/token-count
   only (see §6).
-  - **Rationale containment rule (hard):** the prompt instructs that each field's `rationale` may
-    reference **only** schema vocabulary — property names, Notion types, and option/relation-target
-    names — and **never** raw sample cell values. The zod contract caps rationale length
-    (≤ 200 chars) and the mapper applies a lightweight guard: if a rationale contains a token present
-    in the transient sample but **absent** from the schema vocabulary, the field is flagged and its
-    rationale dropped. This keeps "samples are transient" true even though rationale is persisted and
-    shown in the review UI.
+  - **Rationale containment rule:** each field's `rationale` may reference **only** schema
+    vocabulary — property names, Notion types, and option/relation-target names — and **never** raw
+    sample cell values. **Primary controls:** explicit prompt wording + a zod `≤ 200 char` cap +
+    tests proving sample-only values are stripped/dropped. **Secondary (best-effort) net:** a
+    sample-token guard that drops a rationale containing a token present in the transient sample but
+    absent from the schema vocabulary — treated as a safety net, not the main control, since token
+    matching is inherently noisy. Together these keep "samples are transient" true even though
+    rationale is persisted and shown in the review UI.
 
 ### Jobs & persistence
 - **`lib/jobs/queue.ts`** — thin BullMQ queue + worker wiring (connection from `REDIS_URL`).
@@ -263,7 +267,7 @@ model DatabaseMapping {
   databaseName     String
   classification   String?
   schema           Json     // property metadata: name, notionType, optionNames?, relationTargetName?
-  schemaHash       String   // stable hash of property ids + types + option sets (re-scan gate)
+  schemaHash       String   // stable hash of FULL untruncated schema (all props + complete option sets); re-scan gate
   proposedMapping  Json     // DatabaseMappingProposal (latest AI proposal)
   approvedMapping  Json?    // DatabaseMappingProposal (human-approved; the M3 contract)
   status           String   @default("proposed") // proposed | approved
@@ -299,8 +303,8 @@ stays `0` in M2 (M3 owns it).
 - **A05 misconfig / data minimization:** **never persist** raw cell values, page content, or full row
   payloads. Only schema metadata + mapping persist. Samples are transient. The AI `rationale` is
   persisted and shown in the UI, so it is subject to the **rationale containment rule** (§4
-  schema-mapper): rationale may reference only schema vocabulary, never sample values — enforced by
-  prompt + a length cap + a sample-token guard.
+  schema-mapper): rationale may reference only schema vocabulary, never sample values — primary
+  controls are prompt wording + a length cap + tests; the sample-token guard is a best-effort net.
 - **A07 auth:** Clerk-gated app routes; mutating POSTs (`/api/scan`, `/api/mappings/[id]/approve`)
   carry the same-origin guard established for `/api/notion/disconnect` (route handlers are not covered
   by Next's built-in Server Action CSRF check).
@@ -350,7 +354,7 @@ worker runScan(scanRunId): status queued → running
    for each selected database:
      scanner: schema + transient sample
      candidate-rules (pure) → schema-mapper (AI, forced tool-use + zod, 1 repair retry)
-     compute schemaHash; upsert DatabaseMapping{lastScanRunId, proposedMapping}
+     compute schemaHash (from FULL untruncated schema); upsert DatabaseMapping{lastScanRunId, proposedMapping}
        - new db, or schemaHash changed → status = proposed (re-review)
        - schemaHash unchanged → preserve approvedMapping + keep prior status
      append results[] { notionDatabaseId, status: mapped | failed, errorCode? }
@@ -393,7 +397,8 @@ Screens:
 - **Pure unit:** `candidate-rules` (every Notion type → expected candidate), `rate-limiter`
   (throttle + backoff with injected clock), `lib/contracts/mapping.ts` (zod accept/reject, incl.
   rationale length cap), mapping-merge/normalization (apply human edits onto a proposal), `schemaHash`
-  (stable across reorder, changes on type/option edits), sample bounding (row/property/cell/option
+  (computed from the full untruncated schema; stable across reorder; changes on type/option edits
+  including option changes beyond `MAX_OPTION_NAMES`), sample bounding (row/property/cell/option
   truncation hits the exact constants), rationale sample-token guard (drops a rationale containing a
   sample-only token).
 - **Contract tests:** `notion-client` with mocked `fetchImpl` (databases-only filter, pagination,
