@@ -35,4 +35,15 @@ describe('mapping contract', () => {
     }
     expect(DatabaseMappingProposalSchema.parse(proposal).fields.length).toBe(1)
   })
+
+  it('accepts a proposal with no timeline field (occurredAtPropertyId null)', () => {
+    const proposal = {
+      classification: 'reference table',
+      occurredAtPropertyId: null,
+      fields: [field],
+      modelVersion: 'claude-sonnet-4-6',
+      promptVersion: 'mapper-v1',
+    }
+    expect(DatabaseMappingProposalSchema.parse(proposal).occurredAtPropertyId).toBeNull()
+  })
 })
