@@ -25,6 +25,7 @@ export default async function AppHome({
             <strong>{connection.notionWorkspaceName ?? 'your Notion workspace'}</strong>.
           </p>
           <DisconnectButton />
+          <a href="/app/scan" className="inline-block text-sm text-blue-700 underline">Understand your workspace →</a>
         </div>
       ) : (
         <a
