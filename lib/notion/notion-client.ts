@@ -25,20 +25,23 @@ export function createNotionClient(opts: {
   fetchImpl?: typeof fetch
 }) {
   const doFetch = opts.fetchImpl ?? fetch
-  async function call(path: string, body: unknown): Promise<unknown> {
+  // Single network path for all three reads: rate-limit, send with auth + version headers,
+  // throw on non-ok (status attached so withBackoff can retry 429/5xx). GET omits the body.
+  async function call(args: { method: 'GET' | 'POST'; path: string; body?: unknown }): Promise<unknown> {
     await opts.rateLimiter.acquire()
     return withBackoff(
       async () => {
-        const res = await doFetch(`${API}${path}`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${opts.token}`,
-            'Content-Type': 'application/json',
-            'Notion-Version': NOTION_VERSION,
-          },
-          body: JSON.stringify(body),
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${opts.token}`,
+          'Notion-Version': NOTION_VERSION,
+        }
+        if (args.method === 'POST') headers['Content-Type'] = 'application/json'
+        const res = await doFetch(`${API}${args.path}`, {
+          method: args.method,
+          headers,
+          body: args.method === 'POST' ? JSON.stringify(args.body) : undefined,
         })
-        if (!res.ok) throw Object.assign(new Error(`Notion ${path} failed: ${res.status}`), { status: res.status })
+        if (!res.ok) throw Object.assign(new Error(`Notion ${args.path} failed: ${res.status}`), { status: res.status })
         return res.json()
       },
       { retries: 3, baseMs: 400 },
@@ -48,7 +51,7 @@ export function createNotionClient(opts: {
   return {
     async searchDatabases(args: { cursor?: string }): Promise<{ databases: DatabaseListItem[]; nextCursor: string | null }> {
       const raw = SearchResp.parse(
-        await call('/search', { filter: { property: 'object', value: 'database' }, start_cursor: args.cursor, page_size: 100 }),
+        await call({ method: 'POST', path: '/search', body: { filter: { property: 'object', value: 'database' }, start_cursor: args.cursor, page_size: 100 } }),
       )
       const databases = raw.results.map((r) => {
         const rec = r as { id: string; title?: unknown; icon?: { emoji?: string }; last_edited_time?: string }
@@ -58,18 +61,11 @@ export function createNotionClient(opts: {
     },
 
     async retrieveDatabase(databaseId: string): Promise<ScannedSchema> {
-      await opts.rateLimiter.acquire()
-      const raw = (await withBackoff(
-        async () => {
-          const res = await doFetch(`${API}/databases/${databaseId}`, {
-            method: 'GET',
-            headers: { Authorization: `Bearer ${opts.token}`, 'Notion-Version': NOTION_VERSION },
-          })
-          if (!res.ok) throw Object.assign(new Error(`Notion retrieveDatabase failed: ${res.status}`), { status: res.status })
-          return res.json()
-        },
-        { retries: 3, baseMs: 400 },
-      )) as { id: string; title?: unknown; properties: Record<string, Record<string, unknown>> }
+      const raw = (await call({ method: 'GET', path: `/databases/${databaseId}` })) as {
+        id: string
+        title?: unknown
+        properties: Record<string, Record<string, unknown>>
+      }
 
       const properties: ScannedProperty[] = Object.entries(raw.properties).map(([name, def]) => {
         const type = def.type as string
@@ -84,7 +80,7 @@ export function createNotionClient(opts: {
     },
 
     async queryDatabaseRows(databaseId: string, args: { cursor?: string; pageSize?: number }): Promise<{ rows: RawRow[]; nextCursor: string | null }> {
-      const raw = (await call(`/databases/${databaseId}/query`, { start_cursor: args.cursor, page_size: args.pageSize ?? 20 })) as {
+      const raw = (await call({ method: 'POST', path: `/databases/${databaseId}/query`, body: { start_cursor: args.cursor, page_size: args.pageSize ?? 20 } })) as {
         results: { properties: Record<string, unknown> }[]
         next_cursor: string | null
       }
