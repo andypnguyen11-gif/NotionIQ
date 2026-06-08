@@ -20,6 +20,7 @@ vi.mock('@/lib/notion/oauth', () => ({ exchangeCodeForToken: (...a: unknown[]) =
 
 import { auth } from '@clerk/nextjs/server'
 import { signState, OAUTH_NONCE_COOKIE } from '@/lib/notion/oauth-state'
+import { log } from '@/lib/log'
 import { GET } from './route'
 
 const mockedAuth = vi.mocked(auth)
@@ -49,6 +50,20 @@ describe('GET /api/notion/callback', () => {
     const res = await GET(reqWith({ code: 'abc', state }, 'nonce-A'))
     expect(res.headers.get('location')).toBe('https://app.test/app?notion=error')
     expect(saveNotionConnection).not.toHaveBeenCalled()
+  })
+
+  it('logs a secret-free exchange-failed event when the token exchange throws', async () => {
+    mockedAuth.mockResolvedValue({ userId: 'user_123' } as never)
+    exchangeCodeForToken.mockRejectedValue(new Error('notion 500'))
+    const errSpy = vi.spyOn(log, 'error')
+    const state = signState({ u: 'user_123', n: 'nonce-A', e: Date.now() + 60_000 }, SECRET)
+    await GET(reqWith({ code: 'abc', state }, 'nonce-A'))
+    expect(errSpy).toHaveBeenCalledWith(
+      'notion_oauth_exchange_failed',
+      expect.objectContaining({ userId: 'user_123' }),
+    )
+    const fields = errSpy.mock.calls[0][1] as Record<string, unknown>
+    expect(JSON.stringify(fields)).not.toContain('secret') // no client secret / token leaked
   })
 
   it('redirects to /app?notion=invalid when code or state is missing', async () => {

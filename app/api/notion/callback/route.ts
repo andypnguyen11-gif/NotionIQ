@@ -7,6 +7,7 @@ import { exchangeCodeForToken } from '@/lib/notion/oauth'
 import { verifyState, OAUTH_NONCE_COOKIE } from '@/lib/notion/oauth-state'
 import { encryptToken } from '@/lib/crypto/token-cipher'
 import { saveNotionConnection } from '@/lib/data/connections'
+import { log } from '@/lib/log'
 
 // Clear the single-use nonce, mirroring the attributes connect set it with so the
 // browser reliably drops it. `secure` is scoped to https for local-dev parity.
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest) {
   const payload = verifyState(state, env.OAUTH_STATE_SECRET, Date.now())
   const cookieNonce = req.cookies.get(OAUTH_NONCE_COOKIE)?.value
   if (!payload || payload.u !== userId || !cookieNonce || cookieNonce !== payload.n) {
+    log.warn('notion_oauth_state_invalid', { userId })
     return redirectToApp(appUrl, 'invalid')
   }
 
@@ -70,8 +72,10 @@ export async function GET(req: NextRequest) {
       encryptedToken,
     })
 
+    log.info('notion_connected', { userId, notionWorkspaceId: token.workspaceId })
     return redirectToApp(appUrl, 'connected')
   } catch {
+    log.error('notion_oauth_exchange_failed', { userId })
     return redirectToApp(appUrl, 'error')
   }
 }
