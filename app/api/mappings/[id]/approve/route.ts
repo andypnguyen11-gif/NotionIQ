@@ -48,7 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const result = await approveMapping(prisma, { workspaceId: workspace.id, mappingId: id, approved })
   if (!result) return NextResponse.json({ error: 'not_found' }, { status: 404 })
 
-  const run = await prisma.workspaceScanRun.findUnique({ where: { id: result.lastScanRunId } })
+  const run = await prisma.workspaceScanRun.findFirst({ where: { id: result.lastScanRunId, workspaceId: workspace.id } })
   if (run) {
     const selected = run.selectedDatabaseIds as string[]
     const approvedIds = await listApprovedStatuses(prisma, { workspaceId: workspace.id, notionDatabaseIds: selected })
