@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
-import { upsertProposedMapping, approveMapping, listApprovedStatuses, isRunFullyApproved } from './mappings'
+import { upsertProposedMapping, approveMapping, listApprovedStatuses, isRunFullyApproved, listMappingsForRun } from './mappings'
 
 const proposal = { classification: 'x', occurredAtPropertyId: null, fields: [], modelVersion: 'm', promptVersion: 'mapper-v1' }
 
@@ -84,6 +84,16 @@ describe('listApprovedStatuses', () => {
     } as unknown as PrismaClient
     const result = await listApprovedStatuses(prisma, { workspaceId: 'ws_1', notionDatabaseIds: ['db1', 'db2', 'db3'] })
     expect(result).toEqual(new Set(['db1', 'db2']))
+  })
+})
+
+describe('listMappingsForRun', () => {
+  it('lists mappings for a run, tenant-scoped', async () => {
+    const findMany = vi.fn(async () => [{ id: 'm1', notionDatabaseId: 'db1', databaseName: 'Sales', status: 'proposed', proposedMapping: {}, approvedMapping: null }])
+    const prisma = { databaseMapping: { findMany } } as unknown as PrismaClient
+    const rows = await listMappingsForRun(prisma, { workspaceId: 'ws_1', scanRunId: 'run_1' })
+    expect(rows).toHaveLength(1)
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: 'ws_1', lastScanRunId: 'run_1' } }))
   })
 })
 
