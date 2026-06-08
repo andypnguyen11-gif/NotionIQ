@@ -73,6 +73,17 @@ export async function listApprovedStatuses(
   return new Set(rows.map((r) => r.notionDatabaseId))
 }
 
+export async function listMappingsForRun(
+  prisma: PrismaClient,
+  args: { workspaceId: string; scanRunId: string },
+) {
+  return prisma.databaseMapping.findMany({
+    where: { workspaceId: args.workspaceId, lastScanRunId: args.scanRunId },
+    select: { id: true, notionDatabaseId: true, databaseName: true, status: true, proposedMapping: true, approvedMapping: true },
+    orderBy: { databaseName: 'asc' },
+  })
+}
+
 // Pure: a run is approved when every selected db that did NOT fail has an approved mapping.
 export function isRunFullyApproved(results: DbResult[], approvedDbIds: Set<string>): boolean {
   const needed = results.filter((r) => r.status !== 'failed').map((r) => r.notionDatabaseId)
