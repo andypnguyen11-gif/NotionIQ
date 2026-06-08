@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
-import { saveNotionConnection, getWorkspaceForUser, disconnectNotion } from './connections'
+import { saveNotionConnection, getWorkspaceForUser, getConnectionForUser, disconnectNotion } from './connections'
 
 function fakePrisma(overrides: Record<string, unknown> = {}) {
   return {
@@ -70,6 +70,34 @@ describe('getWorkspaceForUser', () => {
       where: { members: { some: { userId: 'user_123' } } },
       include: { notionConnection: true },
     })
+  })
+})
+
+describe('getConnectionForUser', () => {
+  it('returns the notionConnection for the user workspace', async () => {
+    const prisma = fakePrisma({
+      workspace: {
+        findFirst: vi.fn(async () => ({ id: 'ws_1', notionConnection: { id: 'conn_1' } })),
+        create: vi.fn(),
+      },
+    })
+    const conn = await getConnectionForUser(prisma, 'user_123')
+    expect(conn).toMatchObject({ id: 'conn_1' })
+    expect(prisma.workspace.findFirst).toHaveBeenCalledWith({
+      where: { members: { some: { userId: 'user_123' } } },
+      include: { notionConnection: true },
+    })
+  })
+
+  it('returns null when the user has no workspace', async () => {
+    const prisma = fakePrisma({
+      workspace: {
+        findFirst: vi.fn(async () => null),
+        create: vi.fn(),
+      },
+    })
+    const conn = await getConnectionForUser(prisma, 'user_123')
+    expect(conn).toBeNull()
   })
 })
 
