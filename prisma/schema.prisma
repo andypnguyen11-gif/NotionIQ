@@ -20,6 +20,8 @@ model Workspace {
 
   members          WorkspaceMember[]
   notionConnection NotionConnection?
+  scanRuns         WorkspaceScanRun[]
+  databaseMappings DatabaseMapping[]
 }
 
 model WorkspaceMember {
@@ -44,4 +46,46 @@ model NotionConnection {
   encryptedToken      String // AES-256-GCM ciphertext of the Notion access token (never plaintext)
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+}
+
+model WorkspaceScanRun {
+  id                  String   @id @default(cuid())
+  workspaceId         String
+  workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  status              String   @default("queued") // queued | running | proposed | approved | failed
+  selectedDatabaseIds Json
+  results             Json?
+  propertyCount       Int?
+  sampleRowCount      Int?
+  mapperModel         String?
+  mapperPromptVersion String?
+  error               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  mappings DatabaseMapping[]
+
+  @@index([workspaceId])
+}
+
+model DatabaseMapping {
+  id               String   @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  notionDatabaseId String
+  databaseName     String
+  classification   String?
+  schema           Json
+  schemaHash       String
+  proposedMapping  Json
+  approvedMapping  Json?
+  status           String   @default("proposed") // proposed | approved
+  confidence       Float?
+  lastScanRunId    String
+  lastScanRun      WorkspaceScanRun @relation(fields: [lastScanRunId], references: [id])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([workspaceId, notionDatabaseId])
+  @@index([workspaceId])
 }

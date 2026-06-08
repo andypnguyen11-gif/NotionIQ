@@ -10,6 +10,8 @@ const envSchema = z.object({
   NOTION_OAUTH_REDIRECT_URI: z.string().url(),
   TOKEN_ENCRYPTION_KEY: z.string().min(1, 'TOKEN_ENCRYPTION_KEY is required'),
   OAUTH_STATE_SECRET: z.string().min(16, 'OAUTH_STATE_SECRET must be at least 16 chars'),
+  ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
+  REDIS_URL: z.string().min(1, 'REDIS_URL is required'),
 })
 
 export type Env = z.infer<typeof envSchema>

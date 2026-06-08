@@ -10,4 +10,10 @@ describe('prisma schema', () => {
       expect.arrayContaining(['Workspace', 'WorkspaceMember', 'NotionConnection']),
     )
   })
+
+  it('generates the workspaceScanRun and databaseMapping models', () => {
+    expect(Object.keys(Prisma.ModelName)).toEqual(
+      expect.arrayContaining(['WorkspaceScanRun', 'DatabaseMapping']),
+    )
+  })
 })
