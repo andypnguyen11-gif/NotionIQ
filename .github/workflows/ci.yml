@@ -34,6 +34,10 @@ jobs:
       NOTION_OAUTH_REDIRECT_URI: http://localhost:3000/api/notion/callback
       TOKEN_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       OAUTH_STATE_SECRET: ci-only-not-a-real-state-secret
+      # Non-functional placeholders — CI never calls Anthropic or connects to Redis
+      # (the mapper uses an injected tool caller; the BullMQ queue is constructed lazily).
+      ANTHROPIC_API_KEY: sk-ant-ci-placeholder
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
