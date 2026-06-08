@@ -2898,7 +2898,20 @@ export function ScanClient() {
   }
 
   function setRole(mappingId: string, propId: string, role: Role) {
-    setEdits((prev) => ({ ...prev, [mappingId]: { ...prev[mappingId], roles: { ...prev[mappingId].roles, [propId]: role } } }))
+    setEdits((prev) => {
+      const cur = prev[mappingId] ?? { occurredAtPropertyId: null, roles: {} }
+      const roles = { ...cur.roles, [propId]: role }
+      // If the field that WAS the timeline is no longer a date, clear the timeline.
+      const occurredAtPropertyId = cur.occurredAtPropertyId === propId && role !== 'date' ? null : cur.occurredAtPropertyId
+      return { ...prev, [mappingId]: { occurredAtPropertyId, roles } }
+    })
+  }
+
+  function setOccurredAt(mappingId: string, propId: string | null) {
+    setEdits((prev) => {
+      const cur = prev[mappingId] ?? { occurredAtPropertyId: null, roles: {} }
+      return { ...prev, [mappingId]: { ...cur, occurredAtPropertyId: propId } }
+    })
   }
 
   return (
@@ -2945,25 +2958,49 @@ export function ScanClient() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-gray-500">
-                    <th>Property</th><th>Notion type</th><th>Context</th><th>Role</th><th>AI</th>
+                    <th>Property</th><th>Notion type</th><th>Context</th><th>Role</th><th>Timeline</th><th>AI</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.id} className={row.flagged ? 'bg-amber-50' : ''}>
-                      <td>{row.name}{row.isOccurredAt && <span className="ml-1 text-xs text-blue-700">(timeline)</span>}</td>
-                      <td>{row.notionType}</td>
-                      <td className="text-xs text-gray-500">{row.optionNames?.join(', ') ?? row.relationTargetName ?? ''}</td>
-                      <td>
-                        <select value={edits[m.id]?.roles[row.id] ?? row.role} onChange={(e) => setRole(m.id, row.id, e.target.value as Role)}>
-                          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                        </select>
-                      </td>
-                      <td className="text-xs text-gray-400" title={row.rationale}>{Math.round(row.confidence * 100)}%</td>
-                    </tr>
-                  ))}
+                  {rows.map((row) => {
+                    const role = edits[m.id]?.roles[row.id] ?? row.role
+                    const isDate = role === 'date'
+                    return (
+                      <tr key={row.id} className={row.flagged ? 'bg-amber-50' : ''}>
+                        <td>{row.name}</td>
+                        <td>{row.notionType}</td>
+                        <td className="text-xs text-gray-500">{row.optionNames?.join(', ') ?? row.relationTargetName ?? ''}</td>
+                        <td>
+                          <select value={role} onChange={(e) => setRole(m.id, row.id, e.target.value as Role)}>
+                            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </td>
+                        <td>
+                          {/* Only date-role fields are eligible as the single timeline (occurredAt). */}
+                          <input
+                            type="radio"
+                            name={`occurredAt-${m.id}`}
+                            disabled={!isDate}
+                            checked={edits[m.id]?.occurredAtPropertyId === row.id}
+                            onChange={() => setOccurredAt(m.id, row.id)}
+                            aria-label={`Use ${row.name} as the timeline`}
+                          />
+                        </td>
+                        <td className="text-xs text-gray-400" title={row.rationale}>{Math.round(row.confidence * 100)}%</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
+              <label className="flex items-center gap-2 text-xs text-gray-500">
+                <input
+                  type="radio"
+                  name={`occurredAt-${m.id}`}
+                  checked={!edits[m.id]?.occurredAtPropertyId}
+                  onChange={() => setOccurredAt(m.id, null)}
+                />
+                No timeline field
+              </label>
               <button
                 onClick={() => approve(m.id)}
                 disabled={approved.has(m.id)}
@@ -2979,7 +3016,7 @@ export function ScanClient() {
 }
 ```
 
-This uses every import: `fieldRowsForReview`, `scanProgressLabel`, `isReviewable` from the view-model, and `DatabaseMappingProposal` + `Role` from the contract. The `occurredAt` selection here defaults to the AI's choice; a richer "pick the timeline" control can come later — the approve payload already carries `occurredAtPropertyId`, validated server-side by `applyEdits`.
+This uses every import: `fieldRowsForReview`, `scanProgressLabel`, `isReviewable` from the view-model, and `DatabaseMappingProposal` + `Role` from the contract. The timeline (`occurredAt`) is **human-correctable**: a radio per date-role field (plus "No timeline") seeds from the AI's choice but lets the reviewer override it, and re-roling a field away from `date` clears it if it was the timeline. The approve payload carries `occurredAtPropertyId`, validated server-side by `applyEdits` (which rejects an `occurredAt` that is not a date-role field).
 
 - [ ] **Step 3: Add a link from the app home**
 
