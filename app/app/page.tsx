@@ -2,8 +2,14 @@ import { auth } from '@clerk/nextjs/server'
 import { getPrisma } from '@/lib/prisma'
 import { getWorkspaceForUser } from '@/lib/data/connections'
 import { DisconnectButton } from './disconnect-button'
+import { NotionStatusBanner } from './notion-status-banner'
 
-export default async function AppHome() {
+export default async function AppHome({
+  searchParams,
+}: {
+  searchParams: Promise<{ notion?: string }>
+}) {
+  const { notion } = await searchParams
   const { userId } = await auth()
   const workspace = userId ? await getWorkspaceForUser(getPrisma(), userId) : null
   const connection = workspace?.notionConnection ?? null
@@ -11,6 +17,7 @@ export default async function AppHome() {
   return (
     <main className="space-y-4 p-8">
       <h1 className="text-xl font-semibold">NotionIQ</h1>
+      <NotionStatusBanner status={notion} />
       {connection ? (
         <div className="space-y-2">
           <p className="text-sm text-gray-600">
