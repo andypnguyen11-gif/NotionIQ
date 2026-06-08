@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('@clerk/nextjs/server', () => ({ auth: vi.fn() }))
 vi.mock('@/lib/env', () => ({ getEnv: () => ({ NEXT_PUBLIC_APP_URL: 'https://app.test' }) }))
-vi.mock('@/lib/prisma', () => ({ getPrisma: () => ({ databaseMapping: { findFirst: findFirst }, workspaceScanRun: { findUnique: runFind, update: runUpdate } }) }))
+vi.mock('@/lib/prisma', () => ({ getPrisma: () => ({ databaseMapping: { findFirst: findFirst }, workspaceScanRun: { findFirst: runFind, update: runUpdate } }) }))
 vi.mock('@/lib/data/connections', () => ({ getWorkspaceForUser: (...a: unknown[]) => getWorkspaceForUser(...a) }))
 vi.mock('@/lib/data/mappings', () => ({
   approveMapping: (...a: unknown[]) => approveMapping(...a),
