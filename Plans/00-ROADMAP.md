@@ -93,10 +93,10 @@ To trust this baseline, a future session should verify:
 ## Status
 
 - [x] Roadmap
-- [ ] M0 Foundation (`01-foundation.md`) — **written, ready to execute**
-- [ ] M1 Notion connect — not yet written
-- [ ] M2 Scanner + schema mapper — not yet written
-- [ ] M3 Truth layer — not yet written
+- [x] M0 Foundation (`01-foundation.md`) — **complete**
+- [x] M1 Notion connect — **complete** (OAuth connect/disconnect, AES-GCM token at rest)
+- [x] M2 Scanner + schema mapper (`docs/superpowers/plans/2026-06-08-understand-workspace.md`) — **complete** (scanner, AI schema mapper, human-in-the-loop review UI)
+- [ ] M3 Truth layer — not yet written — **next**
 - [ ] M4 Reports — not yet written
 - [ ] M5 Charts — not yet written
 - [ ] M6 Business — not yet written
