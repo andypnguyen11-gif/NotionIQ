@@ -18,10 +18,12 @@ model Workspace {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  members          WorkspaceMember[]
-  notionConnection NotionConnection?
-  scanRuns         WorkspaceScanRun[]
-  databaseMappings DatabaseMapping[]
+  members           WorkspaceMember[]
+  notionConnection  NotionConnection?
+  scanRuns          WorkspaceScanRun[]
+  databaseMappings  DatabaseMapping[]
+  normalizedRecords NormalizedRecord[]
+  snapshotRuns      SnapshotRun[]
 }
 
 model WorkspaceMember {
@@ -49,10 +51,10 @@ model NotionConnection {
 }
 
 model WorkspaceScanRun {
-  id                  String   @id @default(cuid())
+  id                  String    @id @default(cuid())
   workspaceId         String
   workspace           Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  status              String   @default("queued") // queued | running | proposed | approved | failed
+  status              String    @default("queued") // queued | running | proposed | approved | failed
   selectedDatabaseIds Json
   results             Json?
   propertyCount       Int?
@@ -60,8 +62,8 @@ model WorkspaceScanRun {
   mapperModel         String?
   mapperPromptVersion String?
   error               String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   mappings DatabaseMapping[]
 
@@ -69,9 +71,9 @@ model WorkspaceScanRun {
 }
 
 model DatabaseMapping {
-  id               String   @id @default(cuid())
+  id               String           @id @default(cuid())
   workspaceId      String
-  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   notionDatabaseId String
   databaseName     String
   classification   String?
@@ -79,13 +81,47 @@ model DatabaseMapping {
   schemaHash       String
   proposedMapping  Json
   approvedMapping  Json?
-  status           String   @default("proposed") // proposed | approved
+  status           String           @default("proposed") // proposed | approved
   confidence       Float?
   lastScanRunId    String
   lastScanRun      WorkspaceScanRun @relation(fields: [lastScanRunId], references: [id])
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   @@unique([workspaceId, notionDatabaseId])
+  @@index([workspaceId])
+}
+
+model NormalizedRecord {
+  id               String    @id @default(cuid())
+  workspaceId      String // tenant scope (ADR-3) — always in the WHERE
+  sourceDatabaseId String // the notionDatabaseId this row came from
+  notionPageId     String // provenance back to the Notion row
+  occurredAt       DateTime? // from approvedMapping.occurredAtPropertyId (nullable)
+  snapshotVersion  Int // the version this row belongs to
+  mappedFields     Json // typed values keyed by role + field
+  createdAt        DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, sourceDatabaseId, notionPageId, snapshotVersion]) // idempotent re-ingest
+  @@index([workspaceId, snapshotVersion, sourceDatabaseId])
+  @@index([workspaceId, snapshotVersion, occurredAt])
+}
+
+model SnapshotRun {
+  id              String    @id @default(cuid())
+  workspaceId     String // tenant scope (ADR-3)
+  status          String    @default("queued") // queued | running | committed | partial | failed
+  snapshotVersion Int? // candidate/committed version this run targeted (N+1)
+  results         Json? // per-DB: [{ sourceDatabaseId, status, rowCount?, error? }]
+  error           String? // run-level failure detail
+  startedAt       DateTime? // set when the worker begins
+  finishedAt      DateTime? // set on committed | partial | failed
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   @@index([workspaceId])
 }

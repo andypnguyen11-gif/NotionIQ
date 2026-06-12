@@ -16,4 +16,10 @@ describe('prisma schema', () => {
       expect.arrayContaining(['WorkspaceScanRun', 'DatabaseMapping']),
     )
   })
+
+  it('generates the normalizedRecord and snapshotRun models', () => {
+    expect(Object.keys(Prisma.ModelName)).toEqual(
+      expect.arrayContaining(['NormalizedRecord', 'SnapshotRun']),
+    )
+  })
 })
