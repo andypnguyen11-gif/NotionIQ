@@ -7,10 +7,15 @@ import { createNotionClient } from '@/lib/notion/notion-client'
 import { scanDatabases } from '@/lib/notion/scanner'
 import { mapSchema } from '@/lib/agents/schema-mapper'
 import { createToolCaller, createAnthropicSdk } from '@/lib/agents/anthropic-client'
-import { upsertProposedMapping } from '@/lib/data/mappings'
+import { upsertProposedMapping, listApprovedMappings } from '@/lib/data/mappings'
 import { setRunResults } from '@/lib/data/scan-runs'
 import { runScan, type RunScanDeps } from './run-scan'
 import { SCAN_QUEUE, type ScanJob } from './queue'
+import { collectTypedRows } from '@/lib/notion/typed-reader'
+import { writeSnapshotRecords, commitSnapshot, cleanOrphanCandidates } from '@/lib/data/normalized'
+import { setSnapshotRunStatus } from '@/lib/data/snapshot-runs'
+import { runSnapshot, type RunSnapshotDeps } from './run-snapshot'
+import { SNAPSHOT_QUEUE, type SnapshotJob } from './snapshot-queue'
 
 const MODEL = 'claude-sonnet-4-6'
 
@@ -53,5 +58,31 @@ function buildDeps(): RunScanDeps {
   }
 }
 
+function buildSnapshotDeps(): RunSnapshotDeps {
+  const prisma = getPrisma()
+  const env = getEnv()
+  return {
+    async loadRun(snapshotRunId) {
+      const run = await prisma.snapshotRun.findUniqueOrThrow({ where: { id: snapshotRunId }, include: { workspace: true } })
+      return { workspaceId: run.workspaceId, currentVersion: run.workspace.snapshotVersion }
+    },
+    loadApprovedMappings: (workspaceId) => listApprovedMappings(prisma, workspaceId),
+    cleanOrphans: (workspaceId, currentVersion) => cleanOrphanCandidates(prisma, { workspaceId, currentVersion }),
+    async read(notionDatabaseId) {
+      // Resolve the workspace from the database row, then decrypt its token for the typed pull.
+      const mapping = await prisma.databaseMapping.findFirstOrThrow({ where: { notionDatabaseId }, include: { workspace: { include: { notionConnection: true } } } })
+      const conn = mapping.workspace.notionConnection
+      if (!conn) throw Object.assign(new Error('no connection'), { code: 'NO_CONNECTION' })
+      const token = decryptToken(conn.encryptedToken, env.TOKEN_ENCRYPTION_KEY, conn.notionWorkspaceId)
+      const client = createNotionClient({ token, rateLimiter: createRateLimiter({ ratePerSec: 3 }) })
+      return collectTypedRows(client, notionDatabaseId)
+    },
+    write: (args) => writeSnapshotRecords(prisma, args),
+    commit: (workspaceId, version) => commitSnapshot(prisma, { workspaceId, version }),
+    setStatus: (snapshotRunId, args) => setSnapshotRunStatus(prisma, { snapshotRunId, ...args }),
+  }
+}
+
 const connection = { url: getEnv().REDIS_URL, maxRetriesPerRequest: null }
 new Worker<ScanJob>(SCAN_QUEUE, async (job) => runScan(buildDeps(), job.data.scanRunId), { connection })
+new Worker<SnapshotJob>(SNAPSHOT_QUEUE, async (job) => runSnapshot(buildSnapshotDeps(), job.data.snapshotRunId), { connection })
