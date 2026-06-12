@@ -37,6 +37,7 @@ describe('runSnapshot', () => {
     expect(d.write).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'ws_1', sourceDatabaseId: 'db1', snapshotVersion: 1 }))
     expect(d.commit).toHaveBeenCalledWith('ws_1', 1)
     expect(d.setStatus).toHaveBeenLastCalledWith('run_1', expect.objectContaining({ status: 'committed', snapshotVersion: 1, markFinished: true }))
+    expect(d.read).toHaveBeenCalledWith('ws_1', 'db1')
   })
 
   it('refuses when there are no approved mappings', async () => {
@@ -52,7 +53,7 @@ describe('runSnapshot', () => {
         { notionDatabaseId: 'db1', approvedMapping: mapping },
         { notionDatabaseId: 'db2', approvedMapping: mapping },
       ]),
-      read: vi.fn(async (id: string) => { if (id === 'db2') throw new Error('notion down'); return rows }),
+      read: vi.fn(async (_workspaceId: string, id: string) => { if (id === 'db2') throw new Error('notion down'); return rows }),
     })
     await runSnapshot(d, 'run_1')
     expect(d.commit).not.toHaveBeenCalled()

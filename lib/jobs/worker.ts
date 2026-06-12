@@ -61,6 +61,18 @@ function buildDeps(): RunScanDeps {
 function buildSnapshotDeps(): RunSnapshotDeps {
   const prisma = getPrisma()
   const env = getEnv()
+  // One snapshot run targets a single workspace; build its rate-limited client once and reuse
+  // it across every database so the 3 req/s limiter is shared (no per-database burst).
+  let cached: { workspaceId: string; client: ReturnType<typeof createNotionClient> } | undefined
+  async function clientForWorkspace(workspaceId: string) {
+    if (cached?.workspaceId === workspaceId) return cached.client
+    const conn = await prisma.notionConnection.findUnique({ where: { workspaceId } })
+    if (!conn) throw Object.assign(new Error('no connection'), { code: 'NO_CONNECTION' })
+    const token = decryptToken(conn.encryptedToken, env.TOKEN_ENCRYPTION_KEY, conn.notionWorkspaceId)
+    const client = createNotionClient({ token, rateLimiter: createRateLimiter({ ratePerSec: 3 }) })
+    cached = { workspaceId, client }
+    return client
+  }
   return {
     async loadRun(snapshotRunId) {
       const run = await prisma.snapshotRun.findUniqueOrThrow({ where: { id: snapshotRunId }, include: { workspace: true } })
@@ -68,13 +80,8 @@ function buildSnapshotDeps(): RunSnapshotDeps {
     },
     loadApprovedMappings: (workspaceId) => listApprovedMappings(prisma, workspaceId),
     cleanOrphans: (workspaceId, currentVersion) => cleanOrphanCandidates(prisma, { workspaceId, currentVersion }),
-    async read(notionDatabaseId) {
-      // Resolve the workspace from the database row, then decrypt its token for the typed pull.
-      const mapping = await prisma.databaseMapping.findFirstOrThrow({ where: { notionDatabaseId }, include: { workspace: { include: { notionConnection: true } } } })
-      const conn = mapping.workspace.notionConnection
-      if (!conn) throw Object.assign(new Error('no connection'), { code: 'NO_CONNECTION' })
-      const token = decryptToken(conn.encryptedToken, env.TOKEN_ENCRYPTION_KEY, conn.notionWorkspaceId)
-      const client = createNotionClient({ token, rateLimiter: createRateLimiter({ ratePerSec: 3 }) })
+    async read(workspaceId, notionDatabaseId) {
+      const client = await clientForWorkspace(workspaceId)
       return collectTypedRows(client, notionDatabaseId)
     },
     write: (args) => writeSnapshotRecords(prisma, args),

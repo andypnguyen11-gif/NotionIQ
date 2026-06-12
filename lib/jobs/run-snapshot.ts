@@ -8,7 +8,7 @@ export interface RunSnapshotDeps {
   loadRun(snapshotRunId: string): Promise<{ workspaceId: string; currentVersion: number }>
   loadApprovedMappings(workspaceId: string): Promise<{ notionDatabaseId: string; approvedMapping: DatabaseMappingProposal }[]>
   cleanOrphans(workspaceId: string, currentVersion: number): Promise<void>
-  read(notionDatabaseId: string): Promise<TypedRow[]>
+  read(workspaceId: string, notionDatabaseId: string): Promise<TypedRow[]>
   write(args: { workspaceId: string; sourceDatabaseId: string; snapshotVersion: number; records: NormalizedRecordInput[] }): Promise<void>
   commit(workspaceId: string, version: number): Promise<void>
   setStatus(snapshotRunId: string, args: { status: SnapshotRunStatus; snapshotVersion?: number; results?: SnapshotRunResults; error?: string; markStarted?: boolean; markFinished?: boolean }): Promise<void>
@@ -34,7 +34,7 @@ export async function runSnapshot(deps: RunSnapshotDeps, snapshotRunId: string):
     let allOk = true
     for (const m of mappings) {
       try {
-        const rows = await deps.read(m.notionDatabaseId)
+        const rows = await deps.read(run.workspaceId, m.notionDatabaseId)
         const records = rows.map((r) => normalizeRow(r, m.approvedMapping))
         await deps.write({ workspaceId: run.workspaceId, sourceDatabaseId: m.notionDatabaseId, snapshotVersion: target, records })
         results.push({ sourceDatabaseId: m.notionDatabaseId, status: 'ingested', rowCount: records.length })
