@@ -1,6 +1,6 @@
 # NotionIQ M3 — Truth Layer · Design Spec
 
-**Status:** approved (brainstorm) — ready for plan
+**Status:** Draft — ready for plan pending user approval
 **Date:** 2026-06-12
 **Depends on:** M2 (Understand Workspace) — approved `DatabaseMapping` records
 **Parent spec:** `docs/superpowers/specs/2026-06-05-notioniq-mvp-design.md` (§3 ADR-1/3/4, §5)
@@ -58,6 +58,13 @@ rate-limited operation; decoupling it from approval keeps the heavy Notion fetch
 control and gives M6's scheduled refresh the exact same enqueue path to call. After the first
 snapshot exists, the CTA reads **"Refresh data snapshot."**
 
+A snapshot build is user-visible, async, retryable, and must expose durable per-database
+results that survive page reloads and worker restarts — so it is tracked by a **`SnapshotRun`
+table**, not raw BullMQ queue state. `POST /api/snapshot` creates the `SnapshotRun` and enqueues
+the job with the `snapshotRunId`; the job updates the run as it progresses; `GET /api/snapshot/[id]`
+reads the `SnapshotRun`. This mirrors M2's `WorkspaceScanRun` and is the durable record M6's
+scheduled refresh reuses.
+
 ### D-2 — Additive typed read path; M2's sample path is untouched
 
 The M2 reader stringifies every cell (correct for the mapper, lossy for arithmetic). M3 adds a
@@ -110,10 +117,20 @@ business meaning. The "lone measure on a `sales`-classified DB → revenue" mapp
 ### Notion typed reads (`lib/notion/`)
 
 - New contract: `TypedRow { notionPageId: string; values: Record<string, TypedValue> }` where
-  `TypedValue = number | string | string[] | { date: string } | null` (discriminated/typed).
+  `TypedValue` is a **discriminated union** on `kind` (clearer validation + normalization than a
+  bare union):
+  ```ts
+  type TypedValue =
+    | { kind: 'number'; value: number }
+    | { kind: 'text';   value: string }      // select, status, title, rich_text
+    | { kind: 'list';   value: string[] }    // multi_select, relation, people
+    | { kind: 'date';   value: string }      // ISO 8601
+    | { kind: 'empty' }                       // null/absent cell
+  ```
 - New client method `queryDatabaseRowsTyped(databaseId, { cursor, pageSize })` — full
-  pagination through the existing rate-limiter + backoff helper, extracting native Notion types
-  (number→number, date→ISO string, select/status→string, multi-select/relation→string[]).
+  pagination through the existing rate-limiter + backoff helper, mapping native Notion types to
+  `TypedValue` kinds (number→`number`, date→`date`, select/status/title→`text`,
+  multi-select/relation/people→`list`, null/absent→`empty`).
 - The ingest job paginates to **completion** per database (no sample bound — this is the full
   pull), respecting Notion's ~3 req/s limit.
 
@@ -150,10 +167,15 @@ Pure function `normalizeRow(typedRow, approvedMapping) → NormalizedRecordInput
 
 ### Jobs (`lib/jobs/`)
 
-- `runSnapshot(workspaceId)` job handler: load approved mappings → for each, typed-paginate +
-  `normalizeRow` → `writeSnapshotRecords(N+1)` → if all succeed `commitSnapshot(N+1)`, else
-  leave active version untouched and report partials.
-- Queue + worker wired like the M2 scan queue.
+- `runSnapshot(snapshotRunId)` job handler: load the run + approved mappings → mark run
+  `running` → for each DB, typed-paginate + `normalizeRow` → `writeSnapshotRecords(N+1)`,
+  updating `SnapshotRun.results` per DB → if all succeed `commitSnapshot(N+1)` and mark run
+  `committed`, else leave active version untouched and mark `partial`/`failed`.
+- **New, dedicated queue + worker registration.** M2's queue/worker is scan-specific
+  (`SCAN_QUEUE`, `ScanJob`, `enqueueScan`, a single `Worker<ScanJob>` registered at module
+  load) — there is **no generic reusable abstraction**. M3 adds its own `SNAPSHOT_QUEUE`,
+  `SnapshotJob`, `enqueueSnapshot`, and a second `Worker<SnapshotJob>` registration following
+  the same pattern. The plan wires this explicitly; it does not assume reuse.
 
 ### Contracts (`lib/contracts/`)
 
@@ -185,8 +207,28 @@ model NormalizedRecord {
 }
 ```
 
+```prisma
+model SnapshotRun {
+  id              String    @id @default(cuid())
+  workspaceId     String          // tenant scope (ADR-3)
+  status          String    @default("queued") // queued | running | committed | partial | failed
+  snapshotVersion Int?            // the candidate/committed version this run targeted (N+1)
+  results         Json?           // per-DB: [{ sourceDatabaseId, status, rowCount?, error? }]
+  error           String?         // run-level failure detail
+  startedAt       DateTime?       // set when the worker begins
+  finishedAt      DateTime?       // set on committed | partial | failed
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+```
+
 `Workspace.snapshotVersion` already exists (M2 schema, default `0`). No change to its
-definition; M3 starts writing it past `0`.
+definition; M3 starts writing it past `0`. `Workspace` gains a `snapshotRuns SnapshotRun[]`
+back-relation (and `normalizedRecords NormalizedRecord[]`).
 
 `mappedFields` JSONB shape:
 
@@ -199,17 +241,15 @@ definition; M3 starts writing it past `0`.
 }
 ```
 
-Optional run bookkeeping (decide in planning): a lightweight `SnapshotRun` record (status,
-per-DB results, counts) mirroring `WorkspaceScanRun`, **or** reuse the job/poll status only.
-The plan picks the lighter option that still drives the poll UI.
-
 ---
 
 ## 6. Security (OWASP-aligned)
 
-- **A01 Access control:** every `lib/data/normalized.ts` function is workspace-scoped; no read
-  or write without `workspaceId`. Snapshot trigger/poll endpoints resolve the caller's
-  workspace via Clerk → `WorkspaceMember`, never a client-supplied id.
+- **A01 Access control:** every `lib/data/normalized.ts` and `lib/data/snapshot-runs.ts`
+  function is workspace-scoped; no read or write without `workspaceId`. Snapshot trigger/poll
+  endpoints resolve the caller's workspace via Clerk → `WorkspaceMember`, never a client-supplied
+  id; `GET /api/snapshot/[id]` verifies the run belongs to the caller's workspace before
+  returning it.
 - **A02 Crypto:** the Notion token is decrypted **only** server-side inside the ingest job;
   never logged, never leaves the job.
 - **A03 Injection:** Prisma parameterized queries; zod-validate the snapshot endpoints.
@@ -232,11 +272,13 @@ The plan picks the lighter option that still drives the poll UI.
 
 ## 8. API surface
 
-- `POST /api/snapshot` — zod-validated, workspace-scoped. Enqueues `runSnapshot`; returns a job
-  id. **Refuses (4xx) if the workspace has no approved mappings.**
-- `GET /api/snapshot/[id]` — poll status + per-database results
-  (`{ sourceDatabaseId, status: 'ingested' | 'failed', rowCount?, error? }`) and overall status
-  (`queued | running | committed | partial | failed`). Mirrors `GET /api/scan/[scanRunId]`.
+- `POST /api/snapshot` — zod-validated, workspace-scoped. Creates a `SnapshotRun` and enqueues
+  `runSnapshot(snapshotRunId)`; returns `{ snapshotRunId }`. **Refuses (4xx) if the workspace
+  has no approved mappings.**
+- `GET /api/snapshot/[id]` — reads the **`SnapshotRun`** (not raw queue state), workspace-scoped:
+  overall `status` (`queued | running | committed | partial | failed`) + per-database `results`
+  (`{ sourceDatabaseId, status: 'ingested' | 'failed', rowCount?, error? }`). Mirrors
+  `GET /api/scan/[scanRunId]`.
 
 ---
 
@@ -244,20 +286,21 @@ The plan picks the lighter option that still drives the poll UI.
 
 ```
 approved DatabaseMapping(s) exist
-   → POST /api/snapshot → enqueue runSnapshot(workspaceId)
+   → POST /api/snapshot → create SnapshotRun(queued) → enqueue runSnapshot(snapshotRunId)
 runSnapshot:
+   load SnapshotRun → mark running, startedAt
    currentVersion = workspace.snapshotVersion           (N, 0 on first build)
    cleanOrphanCandidates(workspaceId, currentVersion)    (drop > N leftovers)
    for each approved database:
        typed-paginate all rows  → normalizeRow(...)      (collect warnings)
        writeSnapshotRecords(version = N+1)
-       per-DB result: ingested | failed
+       update SnapshotRun.results[db] = ingested | failed
    if all required DBs ingested:
        commitSnapshot(N+1):  bump snapshotVersion → N+1;  prune < N
-       status = committed
+       SnapshotRun → committed, snapshotVersion = N+1, finishedAt
    else:
        leave snapshotVersion = N (old snapshot stays live)
-       status = partial (some ok) | failed (none ok)
+       SnapshotRun → partial (some ok) | failed (none ok), finishedAt
 consumers (M4/M5):
    getCurrentSnapshotRecords(workspaceId) → metric engine → primitives / named facts
 ```
@@ -298,7 +341,10 @@ Data layer:
 - `commitSnapshot` atomic cutover: version bump + prune `< version - 1`, current + previous
   retained.
 - `cleanOrphanCandidates` removes `> current` leftovers.
-- Tenant scope: assert no data-access path runs without `workspaceId`.
+- `SnapshotRun` lifecycle: create→running→committed and create→running→partial/failed; per-DB
+  `results` persisted; `startedAt`/`finishedAt` set.
+- Tenant scope: assert no data-access path runs without `workspaceId`, and a `GET /api/snapshot/[id]`
+  for another workspace's run is rejected (not leaked).
 
 Integration (mocked Notion):
 
@@ -310,23 +356,27 @@ Integration (mocked Notion):
 
 ## 12. New dependencies & secrets
 
-- **No new external services or secrets.** Reuses Anthropic-free deterministic code, the
-  existing Notion connection/token, Postgres/Prisma, and the BullMQ/Redis queue already wired
-  in M2. (Redis aggregation **cache** — a distinct use — is deferred to M5.)
+- **No new external services or secrets.** Reuses the existing Notion connection/token,
+  Postgres/Prisma, and the BullMQ/Redis **connection** already configured in M2. M3 is
+  AI-free (no Anthropic). Note: M2's queue/worker is scan-specific, so M3 adds a **new**
+  `SNAPSHOT_QUEUE` + worker registration (same Redis connection) — see §4 Jobs. (Redis
+  aggregation **cache** — a distinct use — is deferred to M5.)
 
 ---
 
 ## 13. Build sequence (for the plan)
 
-1. Prisma `NormalizedRecord` model + migration (additive).
-2. `TypedValue`/`TypedRow` + `NormalizedRecordInput` contracts (zod).
+1. Prisma `NormalizedRecord` + `SnapshotRun` models + migration (additive).
+2. `TypedValue`/`TypedRow` (discriminated) + `NormalizedRecordInput` contracts (zod).
 3. Typed Notion read path (`queryDatabaseRowsTyped`).
 4. `normalizeRow` (pure) + warnings.
 5. Metric primitives (pure).
 6. Named resolver (pure, conservative).
-7. `lib/data/normalized.ts` (write / commit / clean / read) — all workspace-scoped.
-8. `runSnapshot` job handler (all-or-nothing) + queue/worker wiring.
-9. `POST /api/snapshot` + `GET /api/snapshot/[id]`.
+7. `lib/data/normalized.ts` (write / commit / clean / read) + `lib/data/snapshot-runs.ts`
+   (create / update results / set status) — all workspace-scoped.
+8. `runSnapshot` job handler (all-or-nothing, updates `SnapshotRun`) + new `SNAPSHOT_QUEUE`
+   queue/worker wiring.
+9. `POST /api/snapshot` (creates `SnapshotRun`) + `GET /api/snapshot/[id]` (reads it).
 10. UI CTA + poll + retry on `/app/scan`.
 
 Each task is TDD: failing test → run → minimal impl → run → commit (conventional, scoped).
@@ -335,11 +385,8 @@ Each task is TDD: failing test → run → minimal impl → run → commit (conv
 
 ## 14. Open questions / risks
 
-- **`SnapshotRun` table vs. job-status-only** (§5) — decide in planning; prefer the lighter
-  option that still drives the poll UI.
 - **Dataset size vs. in-memory aggregation** — fine for MVP; revisit at M5 if a workspace's
   current snapshot is large enough to warrant SQL push-down. Seam is already in place (D-6).
-- **Notion type coverage** — formula/rollup/people/files property types: decide per-type
-  extraction (likely `string`/`string[]`/`unsupported→null+warning`) during typed-reader
-  implementation; the warning path makes gaps visible rather than silent.
-```
+- **Notion type coverage** — formula/rollup/files property types: decide per-type mapping to a
+  `TypedValue` kind (likely `text`/`list`/`empty`) during typed-reader implementation; anything
+  unmapped resolves to `empty` + a normalization warning, so gaps are visible rather than silent.
