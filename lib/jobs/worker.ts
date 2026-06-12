@@ -1,5 +1,6 @@
 import { Worker } from 'bullmq'
 import { getEnv } from '@/lib/env'
+import { log } from '@/lib/log'
 import { getPrisma } from '@/lib/prisma'
 import { decryptToken } from '@/lib/crypto/token-cipher'
 import { createRateLimiter } from '@/lib/notion/rate-limiter'
@@ -92,4 +93,16 @@ function buildSnapshotDeps(): RunSnapshotDeps {
 
 const connection = { url: getEnv().REDIS_URL, maxRetriesPerRequest: null }
 new Worker<ScanJob>(SCAN_QUEUE, async (job) => runScan(buildDeps(), job.data.scanRunId), { connection })
-new Worker<SnapshotJob>(SNAPSHOT_QUEUE, async (job) => runSnapshot(buildSnapshotDeps(), job.data.snapshotRunId), { connection })
+const snapshotWorker = new Worker<SnapshotJob>(SNAPSHOT_QUEUE, async (job) => runSnapshot(buildSnapshotDeps(), job.data.snapshotRunId), { connection })
+
+// Recovery net: runSnapshot marks the run on a normal throw, but a hard process kill or a BullMQ
+// stall bypasses that. BullMQ emits 'failed' for such jobs (here or on a restarted worker) — flip
+// the run out of 'running' so it can't stay stuck. Best-effort; never throws out of the handler.
+snapshotWorker.on('failed', async (job) => {
+  if (!job) return
+  try {
+    await setSnapshotRunStatus(getPrisma(), { snapshotRunId: job.data.snapshotRunId, status: 'failed', error: 'worker job failed', markFinished: true })
+  } catch {
+    log.error('snapshot_failed_handler_error', { snapshotRunId: job.data.snapshotRunId })
+  }
+})

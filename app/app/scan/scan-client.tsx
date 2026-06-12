@@ -100,15 +100,19 @@ export function ScanClient({ initialHasSnapshot = false }: { initialHasSnapshot?
   async function buildSnapshot() {
     if (buildingRef.current) return
     buildingRef.current = true
-    const res = await fetch('/api/snapshot', { method: 'POST', headers: { 'content-type': 'application/json' } })
-    if (!res.ok) {
+    try {
+      const res = await fetch('/api/snapshot', { method: 'POST', headers: { 'content-type': 'application/json' } })
+      if (!res.ok) {
+        buildingRef.current = false
+        return
+      }
+      const data = await res.json()
+      setSnapshotRunId(data.snapshotRunId)
+      setSnapshotStatus('queued')
+      setSnapshotResults([])
+    } catch {
       buildingRef.current = false
-      return
     }
-    const data = await res.json()
-    setSnapshotRunId(data.snapshotRunId)
-    setSnapshotStatus('queued')
-    setSnapshotResults([])
   }
 
   function setRole(mappingId: string, propId: string, role: Role) {
