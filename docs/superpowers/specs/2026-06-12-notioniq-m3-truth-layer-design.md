@@ -91,8 +91,10 @@ failed retries never accumulate.
 ### D-5 — Retain current + previous snapshot (`N` and `N-1`)
 
 On successful cutover, prune records with `snapshotVersion < currentVersion - 1`. Keeping the
-previous snapshot gives rollback and debuggability and protects against a bad refresh, while
-storage stays bounded (at most two versions). This is **not** long-term history.
+previous snapshot aids debugging and manual recovery if a refresh produces bad data, while
+storage stays bounded (at most two versions). This is **not** long-term history, and M3 ships
+**no rollback API** — the retained previous version is for inspection/manual recovery only; do
+not implement automatic rollback behavior.
 
 ### D-6 — Metric engine is pure functions over a fetched record set
 
@@ -124,9 +126,14 @@ business meaning. The "lone measure on a `sales`-classified DB → revenue" mapp
     | { kind: 'number'; value: number }
     | { kind: 'text';   value: string }      // select, status, title, rich_text
     | { kind: 'list';   value: string[] }    // multi_select, relation, people
-    | { kind: 'date';   value: string }      // ISO 8601
+    | { kind: 'date';   value: string }      // full ISO 8601 datetime, UTC (see below)
     | { kind: 'empty' }                       // null/absent cell
   ```
+  **`date.value` is a full ISO 8601 datetime normalized to UTC** (e.g.
+  `2026-06-12T00:00:00.000Z`), not a bare calendar date. Notion's date property may be
+  date-only or datetime; date-only values are widened to midnight UTC so `occurredAt` and
+  `bucketByTime` operate on one uniform representation. Tests lock this: a date-only Notion cell
+  and a datetime Notion cell both yield a full UTC ISO datetime string.
 - New client method `queryDatabaseRowsTyped(databaseId, { cursor, pageSize })` — full
   pagination through the existing rate-limiter + backoff helper, mapping native Notion types to
   `TypedValue` kinds (number→`number`, date→`date`, select/status/title→`text`,
@@ -183,6 +190,11 @@ Pure function `normalizeRow(typedRow, approvedMapping) → NormalizedRecordInput
   `NormalizedRecordInput` (zod; shared API ↔ engine).
 - `lib/contracts/metrics.ts` — metric request/result + the `unsupported` variant (zod; shared
   with M4/M5).
+- `lib/contracts/snapshot-run.ts` — zod schema for the `SnapshotRun.results` shape
+  (`{ sourceDatabaseId, status: 'ingested' | 'failed', rowCount?, error? }[]`) and the run
+  status enum. The job, the API, and the UI all touch `results`, so it is a **shared zod
+  contract**, not loose `Json` typed ad hoc at each call site; the job validates before persisting
+  and the API validates on read.
 
 ---
 
@@ -341,6 +353,9 @@ Data layer:
 - `commitSnapshot` atomic cutover: version bump + prune `< version - 1`, current + previous
   retained.
 - `cleanOrphanCandidates` removes `> current` leftovers.
+- **Failed-run isolation:** after a `partial`/`failed` run leaves candidate `N+1` rows behind
+  (cleanup only happens at the *next* ingest), `getCurrentSnapshotRecords` reads **only**
+  version `N` and never returns the orphaned `N+1` rows.
 - `SnapshotRun` lifecycle: create→running→committed and create→running→partial/failed; per-DB
   `results` persisted; `startedAt`/`finishedAt` set.
 - Tenant scope: assert no data-access path runs without `workspaceId`, and a `GET /api/snapshot/[id]`
@@ -367,7 +382,8 @@ Integration (mocked Notion):
 ## 13. Build sequence (for the plan)
 
 1. Prisma `NormalizedRecord` + `SnapshotRun` models + migration (additive).
-2. `TypedValue`/`TypedRow` (discriminated) + `NormalizedRecordInput` contracts (zod).
+2. `TypedValue`/`TypedRow` (discriminated, UTC `date.value`) + `NormalizedRecordInput` +
+   `SnapshotRun.results` contracts (zod).
 3. Typed Notion read path (`queryDatabaseRowsTyped`).
 4. `normalizeRow` (pure) + warnings.
 5. Metric primitives (pure).
