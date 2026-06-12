@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { RateLimiter } from './rate-limiter'
 import { withBackoff } from './rate-limiter'
+import type { TypedRow, TypedValue } from '@/lib/contracts/normalized'
 
 const NOTION_VERSION = '2022-06-28'
 const API = 'https://api.notion.com/v1'
@@ -87,6 +88,19 @@ export function createNotionClient(opts: {
       const rows: RawRow[] = raw.results.map((row) => ({ values: stringifyRow(row.properties) }))
       return { rows, nextCursor: raw.next_cursor }
     },
+
+    async queryDatabaseRowsTyped(databaseId: string, args: { cursor?: string; pageSize?: number }): Promise<{ rows: TypedRow[]; nextCursor: string | null }> {
+      const raw = (await call({ method: 'POST', path: `/databases/${databaseId}/query`, body: { start_cursor: args.cursor, page_size: args.pageSize ?? 100 } })) as {
+        results: { id: string; properties: Record<string, Record<string, unknown>> }[]
+        next_cursor: string | null
+      }
+      const rows: TypedRow[] = raw.results.map((row) => {
+        const values: Record<string, TypedValue> = {}
+        for (const def of Object.values(row.properties)) values[def.id as string] = toTypedValue(def)
+        return { notionPageId: row.id, values }
+      })
+      return { rows, nextCursor: raw.next_cursor }
+    },
   }
 }
 
@@ -113,4 +127,45 @@ function renderValue(v: unknown): string {
     return ''
   }
   return String(v)
+}
+
+// Map one Notion page-property object to a TypedValue. Unknown/unsupported types → empty
+// (so coverage gaps are visible as empties rather than crashing — see spec §14).
+function toTypedValue(def: Record<string, unknown>): TypedValue {
+  const type = def.type as string
+  const v = def[type]
+  switch (type) {
+    case 'number':
+      return typeof v === 'number' ? { kind: 'number', value: v } : { kind: 'empty' }
+    case 'title':
+    case 'rich_text':
+      return { kind: 'text', value: plainText(v) }
+    case 'select':
+    case 'status': {
+      const name = (v as { name?: string } | null)?.name
+      return name ? { kind: 'text', value: name } : { kind: 'empty' }
+    }
+    case 'multi_select':
+      return { kind: 'list', value: ((v as { name: string }[]) ?? []).map((o) => o.name) }
+    case 'relation':
+    case 'people':
+      return { kind: 'list', value: ((v as { id: string }[]) ?? []).map((o) => o.id) }
+    case 'date': {
+      const start = (v as { start?: string } | null)?.start
+      const iso = start ? toUtcIso(start) : null
+      return iso ? { kind: 'date', value: iso } : { kind: 'empty' }
+    }
+    default:
+      return { kind: 'empty' }
+  }
+}
+
+function plainText(v: unknown): string {
+  return Array.isArray(v) ? v.map((x: { plain_text?: string }) => x.plain_text ?? '').join('') : ''
+}
+
+// Widen date-only to midnight UTC; convert datetimes to UTC. Invalid → null.
+function toUtcIso(input: string): string | null {
+  const d = new Date(input)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
 }
