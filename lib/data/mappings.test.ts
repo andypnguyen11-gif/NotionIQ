@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
-import { upsertProposedMapping, approveMapping, listApprovedStatuses, isRunFullyApproved, listMappingsForRun } from './mappings'
+import { upsertProposedMapping, approveMapping, listApprovedStatuses, isRunFullyApproved, listMappingsForRun, listApprovedMappings } from './mappings'
 
 const proposal = { classification: 'x', occurredAtPropertyId: null, fields: [], modelVersion: 'm', promptVersion: 'mapper-v1' }
 
@@ -107,5 +107,22 @@ describe('isRunFullyApproved', () => {
   it('returns false when there are no non-failed results', () => {
     const results = [{ notionDatabaseId: 'db1', status: 'failed' }]
     expect(isRunFullyApproved(results as never, new Set(['db1']))).toBe(false)
+  })
+})
+
+describe('listApprovedMappings', () => {
+  it('returns approved databases with their approved mapping, workspace-scoped', async () => {
+    const findMany = vi.fn(async () => [{ notionDatabaseId: 'db1', approvedMapping: { classification: 'sales', occurredAtPropertyId: null, fields: [], modelVersion: 'm', promptVersion: 'p' } }])
+    const prisma = { databaseMapping: { findMany } } as unknown as PrismaClient
+    const out = await listApprovedMappings(prisma, 'ws_1')
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: 'ws_1', status: 'approved' } }))
+    expect(out[0].notionDatabaseId).toBe('db1')
+    expect(out[0].approvedMapping.classification).toBe('sales')
+  })
+
+  it('skips approved rows with a null approvedMapping', async () => {
+    const findMany = vi.fn(async () => [{ notionDatabaseId: 'db1', approvedMapping: null }])
+    const prisma = { databaseMapping: { findMany } } as unknown as PrismaClient
+    expect(await listApprovedMappings(prisma, 'ws_1')).toEqual([])
   })
 })

@@ -1,5 +1,5 @@
 import type { PrismaClient, Prisma } from '@prisma/client'
-import type { DatabaseMappingProposal } from '@/lib/contracts/mapping'
+import { DatabaseMappingProposalSchema, type DatabaseMappingProposal } from '@/lib/contracts/mapping'
 import type { DbResult } from './scan-runs'
 
 export async function upsertProposedMapping(
@@ -89,4 +89,22 @@ export function isRunFullyApproved(results: DbResult[], approvedDbIds: Set<strin
   const needed = results.filter((r) => r.status !== 'failed').map((r) => r.notionDatabaseId)
   if (needed.length === 0) return false
   return needed.every((id) => approvedDbIds.has(id))
+}
+
+// Approved databases for a workspace, with their approved mapping parsed back into the typed
+// contract. Rows whose approvedMapping is null/invalid are skipped (defensive). ADR-3 scoped.
+export async function listApprovedMappings(
+  prisma: PrismaClient,
+  workspaceId: string,
+): Promise<{ notionDatabaseId: string; approvedMapping: DatabaseMappingProposal }[]> {
+  const rows = await prisma.databaseMapping.findMany({
+    where: { workspaceId, status: 'approved' },
+    select: { notionDatabaseId: true, approvedMapping: true },
+  })
+  const out: { notionDatabaseId: string; approvedMapping: DatabaseMappingProposal }[] = []
+  for (const r of rows) {
+    const parsed = DatabaseMappingProposalSchema.safeParse(r.approvedMapping)
+    if (parsed.success) out.push({ notionDatabaseId: r.notionDatabaseId, approvedMapping: parsed.data })
+  }
+  return out
 }
