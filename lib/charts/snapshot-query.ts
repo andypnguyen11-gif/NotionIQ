@@ -41,7 +41,9 @@ export function aggregate(records: MetricRecord[], config: ChartConfig, snapshot
       if (r.kind !== 'value') return { kind: 'unsupported', version: CHART_CONTRACT_VERSION, reason: r.reason }
       points.push({ label, value: r.value })
     }
-    points.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label))
+    // Code-point comparison (not localeCompare): deterministic, locale-independent ordering so the
+    // tiebreak — and the downstream cache key — stay stable across dev/prod and ICU versions.
+    points.sort((a, b) => b.value - a.value || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0))
     const kept = points.slice(0, config.topN)
     const omittedGroupCount = points.length - kept.length
     return {
