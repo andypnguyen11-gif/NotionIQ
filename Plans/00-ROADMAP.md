@@ -127,9 +127,17 @@ them into M3 scope. Each should land with its own failing test first.
   snapshot. Shared failure mode with the M2 scan worker — fix both together (idempotent
   reconcile-on-restart).
 - **`min`/`max` return `0` on empty record sets.** No empty-set sentinel; `0` is ambiguous with a real
-  zero. Introduce an explicit empty/no-data result.
+  zero. Introduce an explicit empty/no-data result. (The large-input stack-overflow in these
+  primitives was fixed pre-merge in M3 — this remaining item is only the empty-set sentinel.)
 - **`isSameOrigin` duplicated across API routes.** Extract a single shared helper.
 - **Non-ISO text dates parse in the server's local timezone.** `coerceDate` falls back to `Date`
   parsing for non-ISO strings, which is locale/timezone-dependent. Pin a parser or reject non-ISO.
-- **Single-process worker assumption.** All-or-nothing commit and orphan cleanup assume one snapshot
-  worker per workspace at a time. Validate/guard multi-process concurrency (advisory lock) in M7.
+- **`setSnapshotRunStatus` updates by id alone (not tenant-scoped).** Not exploitable today (only
+  trusted worker/recovery callers reach it), but it is the one write in the snapshot data layer whose
+  tenant scope is caller-dependent rather than structural. Thread `workspaceId` and use
+  `updateMany({ where: { id, workspaceId } })`.
+- **Intra-run multi-process hardening.** The pre-merge single-flight guard (partial unique index on
+  one `queued|running` run per workspace) closes the concurrent-run snapshot-corruption path at the DB
+  level. Remaining optional hardening: a per-workspace advisory lock around the ingest body and a
+  reconcile-on-restart for runs left `running` by a hard crash (shared with the commit/setStatus race
+  above).
