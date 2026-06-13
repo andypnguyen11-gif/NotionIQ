@@ -17,7 +17,7 @@ import { writeSnapshotRecords, commitSnapshot, cleanOrphanCandidates, getCurrent
 import { setSnapshotRunStatus } from '@/lib/data/snapshot-runs'
 import { runSnapshot, type RunSnapshotDeps } from './run-snapshot'
 import { SNAPSHOT_QUEUE, type SnapshotJob } from './snapshot-queue'
-import { setReportRunStatus, persistReportClaims, upsertReport, getReport, getVerifiedClaimsForRun } from '@/lib/data/reports'
+import { setReportRunStatus, persistReportClaims, upsertReport, getReport, getVerifiedClaimsForRun, hasPersistedClaims } from '@/lib/data/reports'
 import { draftInsights, repairInsights } from '@/lib/agents/insight'
 import { runReport, type RunReportDeps } from './run-report'
 import { REPORT_QUEUE, type ReportJob } from './report-queue'
@@ -168,14 +168,16 @@ snapshotWorker.on('failed', async (job) => {
 const reportWorker = new Worker<ReportJob>(REPORT_QUEUE, async (job) => runReport(buildReportDeps(), job.data), { connection })
 
 // Recovery net: a hard kill bypasses runReport's own status writes. On 'failed', recover by the
-// run's current status — running/queued -> failed, rewriting -> write_failed. Best-effort.
+// run's current status — rewriting -> write_failed; running/queued -> write_failed if claims were
+// already persisted (D-8: keep verified claims + write-only retry), else failed. Best-effort.
 reportWorker.on('failed', async (job) => {
   if (!job) return
   try {
     const prisma = getPrisma()
     const run = await prisma.reportRun.findUnique({ where: { id: job.data.reportRunId }, select: { workspaceId: true, status: true } })
     if (!run) return
-    const next = recoveryStatusFor(run.status)
+    const hasClaims = await hasPersistedClaims(prisma, { workspaceId: run.workspaceId, reportRunId: job.data.reportRunId })
+    const next = recoveryStatusFor(run.status, hasClaims)
     if (next) await setReportRunStatus(prisma, { workspaceId: run.workspaceId, reportRunId: job.data.reportRunId, status: next, error: 'worker job failed', markFinished: true })
   } catch {
     log.error('report_failed_handler_error', { reportRunId: job.data.reportRunId })

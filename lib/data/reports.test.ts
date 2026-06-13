@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
 import {
   createReportRun, claimReportRunForRewrite, setReportRunStatus,
-  getReportRunForWorkspace, upsertReport, getReport,
+  getReportRunForWorkspace, upsertReport, getReport, hasPersistedClaims,
 } from './reports'
 
 function fakePrisma(reportRun: Record<string, unknown> = {}, report: Record<string, unknown> = {}) {
@@ -92,5 +92,18 @@ describe('reports data access', () => {
     const prisma = fakePrisma({}, { findUnique: vi.fn(async () => ({ id: 'rep_1', notionPageId: 'p1', ownedBlockIds: [] })) })
     await getReport(prisma, { workspaceId: 'ws_1' })
     expect(prisma.report.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { workspaceId: 'ws_1' } }))
+  })
+
+  it('hasPersistedClaims returns true when count > 0, tenant-scoped to run + workspace', async () => {
+    const count = vi.fn(async () => 2)
+    const prisma = { reportClaim: { count } } as unknown as PrismaClient
+    expect(await hasPersistedClaims(prisma, { workspaceId: 'ws_1', reportRunId: 'run_1' })).toBe(true)
+    expect(count).toHaveBeenCalledWith({ where: { reportRunId: 'run_1', workspaceId: 'ws_1' } })
+  })
+
+  it('hasPersistedClaims returns false when count is 0', async () => {
+    const count = vi.fn(async () => 0)
+    const prisma = { reportClaim: { count } } as unknown as PrismaClient
+    expect(await hasPersistedClaims(prisma, { workspaceId: 'ws_1', reportRunId: 'run_1' })).toBe(false)
   })
 })
