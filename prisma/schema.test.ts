@@ -22,4 +22,10 @@ describe('prisma schema', () => {
       expect.arrayContaining(['NormalizedRecord', 'SnapshotRun']),
     )
   })
+
+  it('generates the report, reportRun, and reportClaim models', () => {
+    expect(Object.keys(Prisma.ModelName)).toEqual(
+      expect.arrayContaining(['Report', 'ReportRun', 'ReportClaim']),
+    )
+  })
 })
