@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
-import { writeSnapshotRecords, commitSnapshot, cleanOrphanCandidates, getCurrentSnapshotRecords, getSnapshotRecordsAtVersion } from './normalized'
+import { writeSnapshotRecords, commitSnapshot, cleanOrphanCandidates, getCurrentSnapshot, getCurrentSnapshotRecords, getSnapshotRecordsAtVersion } from './normalized'
 
 function fakePrisma(over: Record<string, unknown> = {}) {
   return {
@@ -63,6 +63,32 @@ describe('normalized data access', () => {
     })
     const recs = await getCurrentSnapshotRecords(prisma, { workspaceId: 'ws_1' })
     expect(recs).toEqual([{ occurredAt: '2026-06-12T00:00:00.000Z', mappedFields: { measures: { amt: { name: 'Amount', value: 5 } }, dimensions: {}, status: {} } }])
+  })
+
+  it('getCurrentSnapshot returns the workspace version alongside records', async () => {
+    const prisma = fakePrisma({
+      workspace: { findUniqueOrThrow: vi.fn(async () => ({ snapshotVersion: 7 })) },
+      normalizedRecord: {
+        findMany: vi.fn(async () => [{ occurredAt: null, mappedFields: { measures: {}, dimensions: {}, status: {} } }]),
+      },
+    })
+    const res = await getCurrentSnapshot(prisma, { workspaceId: 'ws_1' })
+    expect(res.snapshotVersion).toBe(7)
+    expect(res.records).toHaveLength(1)
+    expect(prisma.normalizedRecord.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ workspaceId: 'ws_1', snapshotVersion: 7 }) }),
+    )
+  })
+
+  it('getCurrentSnapshot scopes to sourceDatabaseId when provided', async () => {
+    const prisma = fakePrisma({
+      workspace: { findUniqueOrThrow: vi.fn(async () => ({ snapshotVersion: 2 })) },
+      normalizedRecord: { findMany: vi.fn(async () => []) },
+    })
+    await getCurrentSnapshot(prisma, { workspaceId: 'ws_1', sourceDatabaseId: 'db_9' })
+    expect(prisma.normalizedRecord.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ sourceDatabaseId: 'db_9' }) }),
+    )
   })
 
   it('reads normalized records at an explicit version, workspace-scoped', async () => {
