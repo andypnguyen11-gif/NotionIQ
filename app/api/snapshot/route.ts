@@ -31,8 +31,15 @@ export async function POST(req: NextRequest) {
   const approved = await listApprovedMappings(prisma, workspace.id)
   if (approved.length === 0) return NextResponse.json({ error: 'no_approved_mappings' }, { status: 400 })
 
+  // Single-flight: createSnapshotRun returns the existing in-flight run (created=false)
+  // rather than starting a second one. Only enqueue a job for a run we actually created;
+  // double-enqueuing would let two workers process the same run concurrently.
   const run = await createSnapshotRun(prisma, { workspaceId: workspace.id })
-  await enqueueSnapshot(run.id)
-  log.info('snapshot_enqueued', { userId, workspaceId: workspace.id, snapshotRunId: run.id, databaseCount: approved.length })
+  if (run.created) {
+    await enqueueSnapshot(run.id)
+    log.info('snapshot_enqueued', { userId, workspaceId: workspace.id, snapshotRunId: run.id, databaseCount: approved.length })
+  } else {
+    log.info('snapshot_already_in_flight', { userId, workspaceId: workspace.id, snapshotRunId: run.id })
+  }
   return NextResponse.json({ snapshotRunId: run.id }, { status: 202 })
 }
