@@ -44,15 +44,25 @@ export interface WriteManagedInput {
   title: string
 }
 
-// Insert-before-delete (spec D-7). Throws on Notion failure WITHOUT having deleted the old
-// region, so the previous report stays live. Best-effort cleanup of the old blocks happens only
-// after the new region is in place.
+// Append-only. Creates the managed page if needed and appends a fresh sentinel-wrapped region,
+// returning the new block ids. It does NOT delete the old region: insert-before-delete is preserved
+// because deletion happens later in the caller, AFTER the new block ids are durably persisted.
+// Throws on Notion failure WITHOUT having touched the old region, so the previous report stays live.
 export async function writeManagedReport(client: ReportWriterClient, input: WriteManagedInput): Promise<{ notionPageId: string; ownedBlockIds: string[] }> {
   const notionPageId = input.existing.notionPageId ?? (await client.createPage({ parentPageId: input.parentPageId, title: input.title }))
   const newBlockIds = await client.appendBlockChildren(notionPageId, buildManagedBlocks(input.report))
-  // New region is live; now remove the old owned blocks (only the ones we recorded).
-  for (const id of input.existing.ownedBlockIds) {
-    await client.deleteBlock(id)
-  }
   return { notionPageId, ownedBlockIds: newBlockIds }
+}
+
+// Best-effort cleanup of a previous run's owned blocks. Runs only after the new region is live AND
+// the new pointer is durably persisted, so orphaned blocks are acceptable: each delete is wrapped so
+// a failure never stops the rest and the function never throws.
+export async function deleteManagedBlocks(client: ReportWriterClient, blockIds: string[]): Promise<void> {
+  for (const id of blockIds) {
+    try {
+      await client.deleteBlock(id)
+    } catch {
+      // orphaned block is acceptable; the live report + DB pointer are already correct
+    }
+  }
 }

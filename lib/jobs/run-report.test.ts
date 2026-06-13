@@ -25,6 +25,7 @@ function baseDeps(over: Partial<RunReportDeps> = {}): RunReportDeps {
     loadReportPointer: vi.fn(async () => ({ notionPageId: null, ownedBlockIds: [], parentPageId: 'parent_1' })),
     writeReport: vi.fn(async () => ({ notionPageId: 'page_1', ownedBlockIds: ['b0', 'b1'] })),
     upsertReport: vi.fn(async () => undefined),
+    deleteOldBlocks: vi.fn(async () => undefined),
     loadVerifiedClaims: vi.fn(async () => []),
     ...over,
   }
@@ -32,18 +33,32 @@ function baseDeps(over: Partial<RunReportDeps> = {}): RunReportDeps {
 const statuses = (deps: RunReportDeps) => (deps.setStatus as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].status)
 
 describe('runReport', () => {
-  it('full happy path: persists claims BEFORE writing, then commits', async () => {
+  it('full happy path: persist claims -> write -> upsert pointer -> delete old, then commits', async () => {
     const order: string[] = []
     const deps = baseDeps({
       persistClaims: vi.fn(async () => { order.push('persist') }),
       writeReport: vi.fn(async () => { order.push('write'); return { notionPageId: 'page_1', ownedBlockIds: ['b0'] } }),
+      upsertReport: vi.fn(async () => { order.push('upsert') }),
+      deleteOldBlocks: vi.fn(async () => { order.push('deleteOld') }),
     })
     await runReport(deps, { reportRunId: 'run_1', mode: 'full' })
-    expect(order).toEqual(['persist', 'write'])
+    expect(order).toEqual(['persist', 'write', 'upsert', 'deleteOld'])
     expect(deps.upsertReport).toHaveBeenCalled()
     expect(statuses(deps)).toContain('committed')
     expect(deps.draft).toHaveBeenCalledTimes(1)
     expect(deps.repair).not.toHaveBeenCalled() // good claim verified first time
+  })
+
+  it('deletes the OLD pointer block ids AFTER persisting the new pointer', async () => {
+    const order: string[] = []
+    const deps = baseDeps({
+      loadReportPointer: vi.fn(async () => ({ notionPageId: 'page_1', ownedBlockIds: ['old1', 'old2'], parentPageId: 'p' })),
+      upsertReport: vi.fn(async () => { order.push('upsert') }),
+      deleteOldBlocks: vi.fn(async () => { order.push('deleteOld') }),
+    })
+    await runReport(deps, { reportRunId: 'run_1', mode: 'full' })
+    expect(deps.deleteOldBlocks).toHaveBeenCalledWith({ workspaceId: 'ws_1', blockIds: ['old1', 'old2'] })
+    expect(order.indexOf('upsert')).toBeLessThan(order.indexOf('deleteOld'))
   })
 
   it('runs exactly one repair when a drafted claim fails verification', async () => {
@@ -60,6 +75,7 @@ describe('runReport', () => {
     expect(deps.persistClaims).toHaveBeenCalled()
     expect(statuses(deps)).toContain('write_failed')
     expect(deps.upsertReport).not.toHaveBeenCalled()
+    expect(deps.deleteOldBlocks).not.toHaveBeenCalled()
   })
 
   it('no snapshot data -> failed before persistence', async () => {
@@ -69,14 +85,21 @@ describe('runReport', () => {
     expect(statuses(deps)).toContain('failed')
   })
 
-  it('write_only mode: no AI, writes from persisted verified claims, commits', async () => {
+  it('write_only mode: no AI, write -> upsert -> delete old, commits', async () => {
+    const order: string[] = []
     const deps = baseDeps({
+      loadReportPointer: vi.fn(async () => ({ notionPageId: 'page_1', ownedBlockIds: ['old1'], parentPageId: 'p' })),
       loadVerifiedClaims: vi.fn(async () => [{ ...goodClaim, verificationStatus: 'verified' as const, renderedText: 'Total 30.' }]),
+      writeReport: vi.fn(async () => { order.push('write'); return { notionPageId: 'page_1', ownedBlockIds: ['b0'] } }),
+      upsertReport: vi.fn(async () => { order.push('upsert') }),
+      deleteOldBlocks: vi.fn(async () => { order.push('deleteOld') }),
     })
     await runReport(deps, { reportRunId: 'run_1', mode: 'write_only' })
     expect(deps.draft).not.toHaveBeenCalled()
     expect(deps.repair).not.toHaveBeenCalled()
     expect(deps.writeReport).toHaveBeenCalled()
+    expect(order).toEqual(['write', 'upsert', 'deleteOld'])
+    expect(deps.deleteOldBlocks).toHaveBeenCalledWith({ workspaceId: 'ws_1', blockIds: ['old1'] })
     expect(statuses(deps)).toContain('committed')
   })
 
