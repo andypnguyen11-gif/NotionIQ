@@ -41,6 +41,9 @@ export function buildChart(mapping: DatabaseMappingProposal, req: BuildChartRequ
     const role = roleOf(req.groupByFieldId)
     if (role !== 'dimension' && role !== 'status')
       return { kind: 'unsupported', reason: 'groupBy field must be a dimension or status role' }
+    if (req.topN !== undefined && (!Number.isInteger(req.topN) || req.topN < 1 || req.topN > 50)) {
+      return { kind: 'unsupported', reason: 'topN must be an integer between 1 and 50' }
+    }
     return finalize({
       shape: 'categorical',
       metric,

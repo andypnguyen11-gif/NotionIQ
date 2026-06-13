@@ -76,4 +76,31 @@ describe('buildChart', () => {
       config: { shape: 'timeseries', bucket: 'week', renderer: 'line' },
     })
   })
+
+  it('refuses average without a measure field (same rule as sum)', () => {
+    expect(buildChart(mapping(), { shape: 'kpi', metric: 'average' })).toMatchObject({ kind: 'unsupported' })
+  })
+
+  it('refuses revenue without a measure field', () => {
+    expect(buildChart(mapping(), { shape: 'kpi', metric: 'revenue' })).toMatchObject({ kind: 'unsupported' })
+  })
+
+  it('refuses categorical when groupByFieldId is not present in the mapping at all', () => {
+    expect(buildChart(mapping(), { shape: 'categorical', metric: 'count', groupByFieldId: 'p_missing' })).toMatchObject({ kind: 'unsupported' })
+  })
+
+  it('passes a caller-supplied topN through, overriding the default', () => {
+    const r = buildChart(mapping(), { shape: 'categorical', metric: 'count', groupByFieldId: 'p_region', topN: 5 })
+    expect(r).toMatchObject({ kind: 'chart', config: { topN: 5 } })
+  })
+
+  it('refuses an out-of-range topN with a clear reason', () => {
+    const r = buildChart(mapping(), { shape: 'categorical', metric: 'count', groupByFieldId: 'p_region', topN: 51 })
+    expect(r).toMatchObject({ kind: 'unsupported', reason: 'topN must be an integer between 1 and 50' })
+  })
+
+  it('passes renderer=pie through for categorical', () => {
+    const r = buildChart(mapping(), { shape: 'categorical', metric: 'count', groupByFieldId: 'p_region', renderer: 'pie' })
+    expect(r).toMatchObject({ kind: 'chart', config: { renderer: 'pie' } })
+  })
 })
