@@ -1,11 +1,13 @@
 import { auth } from '@clerk/nextjs/server'
 import { getPrisma } from '@/lib/prisma'
 import { getWorkspaceForUser } from '@/lib/data/connections'
+import { getReport } from '@/lib/data/reports'
 import { ScanClient } from './scan-client'
 
 export default async function ScanPage() {
   const { userId } = await auth()
-  const workspace = userId ? await getWorkspaceForUser(getPrisma(), userId) : null
+  const prisma = getPrisma()
+  const workspace = userId ? await getWorkspaceForUser(prisma, userId) : null
   const connection = workspace?.notionConnection ?? null
   if (!connection) {
     return (
@@ -16,10 +18,14 @@ export default async function ScanPage() {
       </main>
     )
   }
+  const report = workspace ? await getReport(prisma, { workspaceId: workspace.id }) : null
   return (
     <main className="space-y-4 p-8">
       <h1 className="text-xl font-semibold">Understand your workspace</h1>
-      <ScanClient initialHasSnapshot={(workspace?.snapshotVersion ?? 0) > 0} />
+      <ScanClient
+        initialHasSnapshot={(workspace?.snapshotVersion ?? 0) > 0}
+        initialHasReport={report !== null}
+      />
     </main>
   )
 }
