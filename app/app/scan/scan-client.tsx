@@ -2,8 +2,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fieldRowsForReview, scanProgressLabel, isReviewable } from './scan-view'
 import { snapshotCtaLabel, snapshotProgressLabel, canBuildSnapshot } from './snapshot-view'
+import { reportCtaLabel, canGenerateReport, reportProgressLabel } from './report-view'
 import type { DatabaseMappingProposal, Role } from '@/lib/contracts/mapping'
 import type { SnapshotRunResults } from '@/lib/contracts/snapshot-run'
+import type { ReportRunResults } from '@/lib/contracts/report'
 
 interface DbItem { id: string; title: string }
 interface MappingRow {
@@ -17,7 +19,7 @@ type DbResult = { notionDatabaseId: string; status: 'scanned' | 'mapped' | 'fail
 const ROLES: Role[] = ['date', 'measure', 'dimension', 'status', 'title', 'ignore']
 const TERMINAL_SNAPSHOT_STATUSES = ['committed', 'partial', 'failed']
 
-export function ScanClient({ initialHasSnapshot = false }: { initialHasSnapshot?: boolean }) {
+export function ScanClient({ initialHasSnapshot = false, initialHasReport = false }: { initialHasSnapshot?: boolean; initialHasReport?: boolean }) {
   const [dbs, setDbs] = useState<DbItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scanRunId, setScanRunId] = useState<string | null>(null)
@@ -32,6 +34,9 @@ export function ScanClient({ initialHasSnapshot = false }: { initialHasSnapshot?
   const [snapshotResults, setSnapshotResults] = useState<SnapshotRunResults>([])
   const [hasSnapshot, setHasSnapshot] = useState(initialHasSnapshot)
   const buildingRef = useRef(false)
+  const [reportRunId, setReportRunId] = useState<string | null>(null)
+  const [reportRun, setReportRun] = useState<{ status: string; results: ReportRunResults | null } | null>(null)
+  const [hasReport, setHasReport] = useState(initialHasReport)
 
   useEffect(() => {
     fetch('/api/notion/databases').then((r) => r.json()).then((d) => setDbs(d.databases ?? []))
@@ -58,6 +63,18 @@ export function ScanClient({ initialHasSnapshot = false }: { initialHasSnapshot?
     }, 1500)
     return () => clearInterval(t)
   }, [snapshotRunId, snapshotStatus])
+
+  const TERMINAL_REPORT_STATUSES = ['committed', 'write_failed', 'failed']
+
+  useEffect(() => {
+    if (!reportRunId || (reportRun && TERMINAL_REPORT_STATUSES.includes(reportRun.status))) return
+    const t = setInterval(async () => {
+      const r = await fetch(`/api/report/runs/${reportRunId}`).then((x) => x.json())
+      setReportRun({ status: r.status, results: r.results ?? null })
+      if (r.status === 'committed') setHasReport(true)
+    }, 2000)
+    return () => clearInterval(t)
+  }, [reportRunId, reportRun?.status])
 
   // When the run is reviewable, load the proposals and seed edit state from the AI roles.
   const loadMappings = useCallback(async (runId: string) => {
@@ -113,6 +130,19 @@ export function ScanClient({ initialHasSnapshot = false }: { initialHasSnapshot?
     } catch {
       buildingRef.current = false
     }
+  }
+
+  async function generateReport() {
+    const res = await fetch('/api/report', { method: 'POST' })
+    const data = await res.json()
+    setReportRunId(data.reportRunId)
+    setReportRun(null)
+  }
+
+  async function retryPublish() {
+    if (!reportRunId) return
+    await fetch(`/api/report/runs/${reportRunId}/retry-write`, { method: 'POST' })
+    setReportRun(null)
   }
 
   function setRole(mappingId: string, propId: string, role: Role) {
@@ -238,6 +268,26 @@ export function ScanClient({ initialHasSnapshot = false }: { initialHasSnapshot?
             {snapshotCtaLabel(hasSnapshot)}
           </button>
           {snapshotRunId && <p role="status" className="text-sm text-gray-600">{snapshotProgressLabel({ status: snapshotStatus, results: snapshotResults })}</p>}
+        </div>
+      )}
+      {hasSnapshot && (
+        <div className="space-y-2 border-t pt-4">
+          <button
+            onClick={generateReport}
+            disabled={!canGenerateReport({ hasCommittedSnapshot: hasSnapshot, running: reportRun?.status === 'queued' || reportRun?.status === 'running' || reportRun?.status === 'rewriting' })}
+            className="rounded bg-indigo-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+          >
+            {reportCtaLabel(hasReport)}
+          </button>
+          {reportRun && <p role="status" className="text-sm text-gray-600">{reportProgressLabel(reportRun)}</p>}
+          {reportRun?.status === 'write_failed' && (
+            <button
+              onClick={retryPublish}
+              className="rounded bg-amber-600 px-3 py-1.5 text-sm text-white"
+            >
+              Retry publish
+            </button>
+          )}
         </div>
       )}
     </div>
