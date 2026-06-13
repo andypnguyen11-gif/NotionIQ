@@ -36,6 +36,13 @@ describe('aggregate — categorical', () => {
     expect(out).toMatchObject({ truncated: true, omittedGroupCount: 2, points: [{ label: 'A', value: 4 }, { label: 'B', value: 3 }] })
   })
 
+  it('sums a measure per group, sorted value desc then label asc', () => {
+    const cfg: ChartConfig = { shape: 'categorical', metric: { metric: 'sum', measureFieldId: 'm1' }, groupByFieldId: 'd1', groupByKind: 'dimension', topN: 20, renderer: 'bar' }
+    const recs = [rec('A', null, 10), rec('A', null, 5), rec('B', null, 20)]
+    const out = aggregate(recs, cfg, 1)
+    expect(out).toMatchObject({ kind: 'data', shape: 'categorical', points: [{ label: 'B', value: 20 }, { label: 'A', value: 15 }] })
+  })
+
   it('returns empty data (not a refusal) for an empty snapshot', () => {
     expect(aggregate([], config, 9)).toEqual({
       kind: 'data', version: 1, snapshotVersion: 9, shape: 'categorical', points: [], truncated: false, omittedGroupCount: 0,
