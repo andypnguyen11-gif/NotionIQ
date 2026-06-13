@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createNotionClient } from './notion-client'
+import { createRateLimiter } from './rate-limiter'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status })
@@ -88,5 +89,53 @@ describe('notion-client', () => {
       p4: { kind: 'date', value: '2026-06-12T00:00:00.000Z' },
       p5: { kind: 'empty' },
     })
+  })
+})
+
+function okFetch(body: unknown) {
+  return vi.fn(async () => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+}
+
+describe('notion client write methods', () => {
+  it('createPage posts a child page and returns its id', async () => {
+    const fetchImpl = okFetch({ id: 'page_1' })
+    const client = createNotionClient({ token: 't', rateLimiter: createRateLimiter({ ratePerSec: 50 }), fetchImpl })
+    const id = await client.createPage({ parentPageId: 'parent_1', title: 'AI Business Review' })
+    expect(id).toBe('page_1')
+    const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toMatch(/\/pages$/)
+    expect(JSON.parse((init as RequestInit).body as string).parent).toEqual({ page_id: 'parent_1' })
+  })
+
+  it('appendBlockChildren returns the created block ids in order', async () => {
+    const fetchImpl = okFetch({ results: [{ id: 'b1' }, { id: 'b2' }] })
+    const client = createNotionClient({ token: 't', rateLimiter: createRateLimiter({ ratePerSec: 50 }), fetchImpl })
+    const ids = await client.appendBlockChildren('page_1', [{ type: 'paragraph' } as never])
+    expect(ids).toEqual(['b1', 'b2'])
+  })
+
+  it('listBlockChildren returns child ids', async () => {
+    const fetchImpl = okFetch({ results: [{ id: 'b1' }, { id: 'b2' }], next_cursor: null })
+    const client = createNotionClient({ token: 't', rateLimiter: createRateLimiter({ ratePerSec: 50 }), fetchImpl })
+    const res = await client.listBlockChildren('page_1', {})
+    expect(res.blockIds).toEqual(['b1', 'b2'])
+  })
+
+  it('deleteBlock issues a DELETE for the block', async () => {
+    const fetchImpl = okFetch({ id: 'b1', archived: true })
+    const client = createNotionClient({ token: 't', rateLimiter: createRateLimiter({ ratePerSec: 50 }), fetchImpl })
+    await client.deleteBlock('b1')
+    const [url, init] = (fetchImpl as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toMatch(/\/blocks\/b1$/)
+    expect((init as RequestInit).method).toBe('DELETE')
+  })
+
+  it('searchFirstPageId returns the id of the first accessible page, or null', async () => {
+    const withPage = okFetch({ results: [{ id: 'pg_1', object: 'page' }], has_more: false, next_cursor: null })
+    const c1 = createNotionClient({ token: 't', rateLimiter: createRateLimiter({ ratePerSec: 50 }), fetchImpl: withPage })
+    expect(await c1.searchFirstPageId()).toBe('pg_1')
+    const empty = okFetch({ results: [], has_more: false, next_cursor: null })
+    const c2 = createNotionClient({ token: 't', rateLimiter: createRateLimiter({ ratePerSec: 50 }), fetchImpl: empty })
+    expect(await c2.searchFirstPageId()).toBeNull()
   })
 })
