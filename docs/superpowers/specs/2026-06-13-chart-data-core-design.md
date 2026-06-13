@@ -69,8 +69,9 @@ These are locked and must be enforced by tests.
   `average` and invites misreading for count/sum. `topN` is bounded **int, min 1, max 50**;
   `chart-builder` defaults it to **20**.
 - **Null / missing category value** → deterministic label **`"(Unspecified)"`**. It is a real group of
-  real records: it participates in value-desc/label-asc ordering and counts toward top-N (it is never
-  part of the omitted tail by construction).
+  real records and participates exactly like any other group: it sorts by value-desc/label-asc and **may
+  be omitted if it falls outside top-N**, in which case it is included in `omittedGroupCount`. It gets no
+  special pinning.
 - **Time buckets** → **UTC only**. `day` = UTC calendar day; `week` = ISO week (Monday start), keyed by
   the UTC date of that Monday; `month` = UTC calendar month. This deliberately sidesteps the M7
   locale-parsing follow-up.
@@ -200,9 +201,22 @@ Pure, deterministic, dispatch on `config.shape`. It **groups, then delegates the
 
 **Metric-supportability is decided once, before grouping.** A chart whose `config.metric` cannot resolve
 *in principle* is caught at build time by `chart-builder`. At runtime `aggregate` evaluates the metric
-uniformly per group/bucket, so groups never silently disappear due to per-group metric refusal; a
-genuine runtime refusal (e.g. `average` over a snapshot with zero records) returns a single top-level
-`{kind:'unsupported'}`.
+uniformly per group/bucket, so groups never silently disappear due to per-group metric refusal.
+
+### Empty-snapshot behavior (explicit, by shape)
+
+When the current snapshot has **zero records** for the chart's source:
+
+- **categorical** → `{kind:'data'}` with **empty `points`**, `truncated:false`, `omittedGroupCount:0`.
+  No groups exist, so the per-group metric is never invoked — emptiness is never a refusal.
+- **timeseries** → `{kind:'data'}` with **empty `points`**. Same reasoning (no buckets).
+- **kpi** → delegates straight to `resolveNamedMetric` over the empty set, so the *metric* decides:
+  `count`/`sum`/`revenue` → `{kind:'data', value:0}` (a true zero); `average` → `{kind:'unsupported',
+  reason:'average of an empty record set'}` (the engine's existing refusal — there is no honest average
+  of nothing).
+
+So the **only** path that turns emptiness into a top-level `{kind:'unsupported'}` is **KPI + average**;
+categorical and timeseries always render an honest empty series.
 
 ## 8. Caching
 
@@ -210,8 +224,15 @@ genuine runtime refusal (e.g. `average` over a snapshot with zero records) retur
   `chartId:workspaceId:normalizedFilterSet:snapshotVersion` (ADR-4). `normalizedFilterSet` is `""` in
   this slice; config-filters fills it in.
 - `queryChartData(deps, args)` — `deps` carries an **injected** cache interface (`get`/`set`) and the
-  prisma client. Flow: build key → cache `get` → on miss `getCurrentSnapshot` + `aggregate` + cache
-  `set` → return contract. Unit-tested with a **fake** cache (hit + miss); no real Redis in this slice.
+  prisma client. **Flow (order matters — the key needs `snapshotVersion`, which only `getCurrentSnapshot`
+  yields):** `getCurrentSnapshot` → build `cacheKey` from its returned `snapshotVersion` → cache `get` →
+  **hit:** return cached contract → **miss:** `aggregate(records, config)` → cache `set` → return.
+  Reading the snapshot first also makes the key race-free: the contract's `snapshotVersion` and the key's
+  always agree, even if a scan commits mid-request. Unit-tested with a **fake** cache (hit + miss); no
+  real Redis in this slice.
+  - *Future optimization (not now):* on a cache hit this still reads records to learn the version. A
+    later refinement can read just `workspace.snapshotVersion` (cheap, indexed) to build the key and skip
+    the records read on a hit. Deferred to keep the slice simple and race-free.
 
 ## 9. Security
 
@@ -232,6 +253,8 @@ Pure functions dominate, so coverage is cheap and deterministic:
   rows skipped; kpi reuse; runtime `unsupported` pass-through (e.g. `average` over zero records).
 - **aggregate (timeseries, all-null `occurredAt`)** → valid `{kind:'data'}` with empty `points` (not a
   refusal).
+- **aggregate (empty snapshot, by shape)** → categorical & timeseries → `{kind:'data'}` empty `points`;
+  kpi `count`/`sum`/`revenue` → `value:0`; kpi `average` → `{kind:'unsupported'}`.
 - **chart-builder** — builds valid config from a mapping; refuses (`kind:'unsupported'`) when groupBy
   field absent / wrong role, measure absent, occurredAt absent (timeseries), classification absent
   (revenue); resolves `groupByKind` and bakes `classification`.
