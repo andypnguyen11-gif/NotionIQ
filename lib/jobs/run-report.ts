@@ -21,6 +21,7 @@ export interface RunReportDeps {
   loadReportPointer(workspaceId: string): Promise<{ notionPageId: string | null; ownedBlockIds: string[]; parentPageId: string }>
   writeReport(args: { workspaceId: string; report: ReturnType<typeof assembleReport>; existing: { notionPageId: string | null; ownedBlockIds: string[] }; parentPageId: string; title: string }): Promise<{ notionPageId: string; ownedBlockIds: string[] }>
   upsertReport(args: { workspaceId: string; notionPageId: string; ownedBlockIds: string[]; lastRunId: string; lastSnapshotVersion: number; lastGeneratedAt: Date }): Promise<void>
+  deleteOldBlocks(args: { workspaceId: string; blockIds: string[] }): Promise<void>
   loadVerifiedClaims(args: { workspaceId: string; reportRunId: string }): Promise<VerifiedClaim[]>
 }
 
@@ -90,7 +91,15 @@ export async function runReport(deps: RunReportDeps, job: { reportRunId: string;
       return
     }
 
+    // Persist the new pointer FIRST so the DB never references deleted blocks, THEN best-effort
+    // delete the old region. deleteOldBlocks never throws, but defensively guard the call so a
+    // delete problem can't fail an already-committed run.
     await deps.upsertReport({ workspaceId: run.workspaceId, notionPageId: written.notionPageId, ownedBlockIds: written.ownedBlockIds, lastRunId: job.reportRunId, lastSnapshotVersion: run.currentVersion, lastGeneratedAt: new Date(computedAt) })
+    try {
+      await deps.deleteOldBlocks({ workspaceId: run.workspaceId, blockIds: pointer.ownedBlockIds })
+    } catch {
+      log.error('report_delete_old_blocks_failed', { reportRunId: job.reportRunId })
+    }
     await deps.setStatus({ workspaceId: run.workspaceId, reportRunId: job.reportRunId, status: 'committed', snapshotVersion: run.currentVersion, markFinished: true })
   } catch {
     log.error('report_run_failed', { reportRunId: job.reportRunId })
@@ -112,5 +121,10 @@ async function writeOnly(deps: RunReportDeps, run: { workspaceId: string; runSna
     return
   }
   await deps.upsertReport({ workspaceId: run.workspaceId, notionPageId: written.notionPageId, ownedBlockIds: written.ownedBlockIds, lastRunId: reportRunId, lastSnapshotVersion: run.runSnapshotVersion ?? 0, lastGeneratedAt: new Date(deps.clock()) })
+  try {
+    await deps.deleteOldBlocks({ workspaceId: run.workspaceId, blockIds: pointer.ownedBlockIds })
+  } catch {
+    log.error('report_delete_old_blocks_failed', { reportRunId })
+  }
   await deps.setStatus({ workspaceId: run.workspaceId, reportRunId, status: 'committed', snapshotVersion: run.runSnapshotVersion ?? undefined, markFinished: true })
 }

@@ -1,6 +1,6 @@
 // lib/notion/report-writer.test.ts
 import { describe, it, expect, vi } from 'vitest'
-import { writeManagedReport, SENTINEL_START, SENTINEL_END } from './report-writer'
+import { writeManagedReport, deleteManagedBlocks, SENTINEL_START, SENTINEL_END } from './report-writer'
 import type { AssembledReport } from '@/lib/reports/assemble'
 
 const report: AssembledReport = {
@@ -19,13 +19,13 @@ function fakeClient(overrides: Record<string, unknown> = {}) {
 }
 
 describe('report-writer', () => {
-  it('creates the managed page on first run and inserts a sentinel-wrapped region', async () => {
+  it('creates the managed page on first run and inserts a sentinel-wrapped region (no delete)', async () => {
     const client = fakeClient()
     const res = await writeManagedReport(client as never, { report, existing: { notionPageId: null, ownedBlockIds: [] }, parentPageId: 'parent_1', title: 'AI Business Review' })
     expect(client.createPage).toHaveBeenCalledWith({ parentPageId: 'parent_1', title: 'AI Business Review' })
     expect(res.notionPageId).toBe('page_new')
     expect(res.ownedBlockIds.length).toBeGreaterThan(0)
-    // nothing to delete on first run
+    // the writer no longer deletes
     expect(client.deleteBlock).not.toHaveBeenCalled()
     // sentinels are present in the inserted children
     const children = client.appendBlockChildren.mock.calls[0][1] as { type?: string; paragraph?: { rich_text: { text: { content: string } }[] }; heading_2?: { rich_text: { text: { content: string } }[] } }[]
@@ -37,25 +37,43 @@ describe('report-writer', () => {
     expect(headings).toContain('Summary')
   })
 
-  it('inserts BEFORE deleting old owned blocks (live report never blanked)', async () => {
-    const order: string[] = []
+  it('appends to an existing report page without creating or deleting', async () => {
     const client = fakeClient({
-      appendBlockChildren: vi.fn(async (_id: string, c: unknown[]) => { order.push('append'); return (c as unknown[]).map((_x, i) => `n${i}`) }),
-      deleteBlock: vi.fn(async (id: string) => { order.push(`delete:${id}`) }),
+      appendBlockChildren: vi.fn(async (_id: string, c: unknown[]) => (c as unknown[]).map((_x, i) => `n${i}`)),
     })
     const res = await writeManagedReport(client as never, { report, existing: { notionPageId: 'page_1', ownedBlockIds: ['old1', 'old2'] }, parentPageId: 'parent_1', title: 'AI Business Review' })
     expect(client.createPage).not.toHaveBeenCalled()
-    expect(order[0]).toBe('append')
-    expect(order).toContain('delete:old1')
-    expect(order).toContain('delete:old2')
-    expect(order.indexOf('append')).toBeLessThan(order.indexOf('delete:old1'))
+    expect(client.deleteBlock).not.toHaveBeenCalled()
     // start sentinel + section heading + item + end sentinel = 4 blocks
     expect(res.ownedBlockIds).toEqual(['n0', 'n1', 'n2', 'n3'])
   })
 
-  it('does not delete old blocks if the insert fails (old report stays live)', async () => {
+  it('rejects if the append fails and never deletes', async () => {
     const client = fakeClient({ appendBlockChildren: vi.fn(async () => { throw new Error('notion 500') }) })
     await expect(writeManagedReport(client as never, { report, existing: { notionPageId: 'page_1', ownedBlockIds: ['old1'] }, parentPageId: 'p', title: 'T' })).rejects.toThrow('notion 500')
     expect(client.deleteBlock).not.toHaveBeenCalled()
+  })
+})
+
+describe('deleteManagedBlocks', () => {
+  it('deletes each id once, in order', async () => {
+    const order: string[] = []
+    const client = fakeClient({ deleteBlock: vi.fn(async (id: string) => { order.push(id) }) })
+    await deleteManagedBlocks(client as never, ['a', 'b', 'c'])
+    expect(client.deleteBlock).toHaveBeenCalledTimes(3)
+    expect(order).toEqual(['a', 'b', 'c'])
+  })
+
+  it('is best-effort: a failing delete does not stop the rest and never throws', async () => {
+    const order: string[] = []
+    const client = fakeClient({
+      deleteBlock: vi.fn(async (id: string) => {
+        order.push(id)
+        if (id === 'b') throw new Error('notion 404')
+      }),
+    })
+    await expect(deleteManagedBlocks(client as never, ['a', 'b', 'c'])).resolves.toBeUndefined()
+    expect(order).toEqual(['a', 'b', 'c'])
+    expect(client.deleteBlock).toHaveBeenCalledTimes(3)
   })
 })

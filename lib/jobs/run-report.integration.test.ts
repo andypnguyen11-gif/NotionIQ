@@ -34,6 +34,7 @@ describe('runReport integration (real pure pipeline)', () => {
       loadReportPointer: async () => ({ notionPageId: null, ownedBlockIds: [], parentPageId: 'parent_1' }),
       writeReport: async (a) => { writtenReport = a.report; return { notionPageId: 'page_1', ownedBlockIds: ['b0'] } },
       upsertReport: vi.fn(async () => undefined),
+      deleteOldBlocks: vi.fn(async () => undefined),
       loadVerifiedClaims: async () => [],
     }
     await runReport(deps, { reportRunId: 'run_1', mode: 'full' })

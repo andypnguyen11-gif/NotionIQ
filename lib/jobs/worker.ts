@@ -22,7 +22,7 @@ import { draftInsights, repairInsights } from '@/lib/agents/insight'
 import { runReport, type RunReportDeps } from './run-report'
 import { REPORT_QUEUE, type ReportJob } from './report-queue'
 import { recoveryStatusFor } from './report-recovery'
-import { writeManagedReport } from '@/lib/notion/report-writer'
+import { writeManagedReport, deleteManagedBlocks } from '@/lib/notion/report-writer'
 
 const MODEL = 'claude-sonnet-4-6'
 
@@ -145,6 +145,10 @@ function buildReportDeps(): RunReportDeps {
       return writeManagedReport(client, { report: args.report, existing: args.existing, parentPageId: args.parentPageId, title: args.title })
     },
     upsertReport: (args) => upsertReport(prisma, args),
+    async deleteOldBlocks({ workspaceId, blockIds }) {
+      const client = await clientForWorkspace(workspaceId)
+      await deleteManagedBlocks(client, blockIds)
+    },
     loadVerifiedClaims: (args) => getVerifiedClaimsForRun(prisma, args),
   }
 }
