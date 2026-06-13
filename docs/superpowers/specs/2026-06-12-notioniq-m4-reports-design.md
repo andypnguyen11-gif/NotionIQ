@@ -106,13 +106,22 @@ place** thereafter. This gives the user one stable "AI Business Review" page, gi
 chart embeds, and makes idempotency and future scheduled refresh clean. No destination picker in M4
 (a "change report destination" setting can come later).
 
-### D-7 — Managed-region idempotency via recorded block IDs
+### D-7 — Managed-region idempotency via recorded block IDs, insert-before-delete
 
-The writer owns only the blocks it created, recorded as `Report.ownedBlockIds`. On re-run it deletes
-exactly those IDs, then inserts the new managed region and saves the new ID set — never touching the
-user's own content, the title, or hand-added blocks. **Sentinel start/end blocks wrap the managed region**
-as mandatory-but-non-authoritative markers for human/debug visibility and future reconciliation;
-`ownedBlockIds` remains the authoritative delete list.
+The writer owns only the blocks it created, recorded as `Report.ownedBlockIds`. The write is ordered
+**insert-new-then-delete-old** so a failure can never blank the live report:
+
+1. Insert the new managed region, recording each created block id as it goes.
+2. Durably record the new ids (so they are known even after a crash) — persist them, then atomically swap
+   `Report.ownedBlockIds` to the new set.
+3. Only after the new region is complete and its ids are recorded, delete the **old** owned ids.
+
+A failure **before** the delete may leave duplicate/orphan *new* blocks, but the previous report stays
+fully live — strictly better than the delete-first order, which blanks the live page if the insert then
+fails. Orphans are cleaned best-effort on the next run. The writer never touches the user's own content,
+the title, or hand-added blocks. **Sentinel start/end blocks wrap the managed region** as
+mandatory-but-non-authoritative markers for human/debug visibility and reconciliation; `ownedBlockIds`
+remains the authoritative delete list.
 
 ### D-8 — Persist claims before the Notion write
 
@@ -128,9 +137,12 @@ changes the underlying numbers.
 
 ### D-10 — Single-flight report runs per workspace
 
-At most one in-flight (`queued|running`) `ReportRun` per workspace, enforced by a partial unique index
-(DB backstop) plus an application-level find-or-create with `P2002` fallback — the exact pattern M3 uses
-for snapshot runs. Prevents overlapping writes to the same managed page.
+At most one in-flight (`queued|running|rewriting`) `ReportRun` per workspace, enforced by a partial unique
+index (DB backstop) plus an application-level find-or-create with `P2002` fallback — the same pattern M3
+uses for snapshot runs. The predicate includes **`rewriting`** (the write-only-retry state) precisely so a
+`write_failed` retry and a fresh `POST /api/report` cannot both write the managed page concurrently:
+claiming a `write_failed` run for retry transitions it to `rewriting`, which occupies the single-flight
+slot, so the fresh request finds the active run and returns it instead of starting an overlapping run.
 
 ---
 
@@ -174,11 +186,12 @@ rate-limited, backoff-wrapped client. Read methods (M2/M3) are untouched.
 
 ### Report writer (`lib/notion/report-writer.ts`)
 
-Idempotent managed-region write: delete `Report.ownedBlockIds` → insert sentinel-wrapped managed region →
-return the new block IDs. Records each block id as it creates it. **Partial-write cleanup is best-effort
-using recorded IDs; the sentinel blocks aid future reconciliation** — after a hard process kill between
-Notion accepting blocks and the IDs being persisted, orphan blocks are possible and not guaranteed to be
-cleaned (reconciled on a later run via the sentinels). No guarantee of zero orphans across hard kills.
+Idempotent managed-region write, **insert-before-delete** (D-7): insert the new sentinel-wrapped region →
+record the new block IDs durably + swap `Report.ownedBlockIds` → then delete the old owned IDs. Records
+each block id as it creates it. **Partial-write cleanup is best-effort using recorded IDs; the sentinel
+blocks aid future reconciliation** — after a hard process kill, orphan *new* blocks are possible and not
+guaranteed to be cleaned (reconciled best-effort on a later run via the sentinels). The live report is
+never blanked. No guarantee of zero orphans across hard kills.
 
 ### Data access (`lib/data/reports.ts`)
 
@@ -198,7 +211,8 @@ zod schemas shared across job, verifier, and API (see §5).
 
 ### API (`app/api/report/`)
 
-`route.ts` — `POST` trigger. `runs/[id]/route.ts` — `GET` run status (Next.js 16: `params` is a Promise).
+`route.ts` — `POST` trigger. `runs/[id]/route.ts` — `GET` run status. `runs/[id]/retry-write/route.ts` —
+`POST` write-only retry of a `write_failed` run (Next.js 16: `params` is a Promise on all of them).
 
 ### UI (`/app/scan` or a report surface)
 
@@ -288,7 +302,7 @@ model Report {                 // one per workspace: the current managed destina
 model ReportRun {              // append-only generation history
   id              String   @id @default(cuid())
   workspaceId     String
-  status          String   @default("queued") // queued|running|committed|write_failed|failed
+  status          String   @default("queued") // queued|running|rewriting|committed|write_failed|failed
   snapshotVersion Int?
   model           String?
   promptVersion   String?
@@ -330,10 +344,17 @@ M3's single-flight index):
 
 ```sql
 CREATE UNIQUE INDEX "ReportRun_workspaceId_active_key"
-  ON "ReportRun"("workspaceId") WHERE "status" IN ('queued', 'running');
+  ON "ReportRun"("workspaceId") WHERE "status" IN ('queued', 'running', 'rewriting');
 ```
 
 `Workspace` gains the back-relations (`Report?`, `ReportRun[]`).
+
+**`ReportRun` ↔ `Report` relation is implicit through `workspaceId`** (`Report` is 1:1 with `Workspace`),
+deliberately **not** a `reportId` FK on `ReportRun`. Reason: the first `ReportRun` is created *before* any
+`Report` exists — the managed `Report` is auto-created only on the first successful Notion write (D-6) — so
+a non-null `reportId` at run-creation time is impossible. Each run's managed destination is resolved as
+`Report where workspaceId = run.workspaceId`. `ReportClaim` carries `workspaceId` directly (tenant scoping,
+A01) in addition to its `reportRunId` FK.
 
 ---
 
@@ -353,26 +374,40 @@ POST /api/report ─▶ create/find-active ReportRun ─▶ enqueue (if created)
  6. assemble: order by severity, interpolate engine numbers, freeze values;
        zero verified → honest minimal body                                          (deterministic)
  7. PERSIST ReportRun results + token usage + all ReportClaims                       (audit durable here)
- 8. report-writer: delete ownedBlockIds → insert sentinel-wrapped managed region
+ 8. report-writer (insert-before-delete, D-7): insert new sentinel-wrapped region → record new
+       ownedBlockIds → delete old owned IDs
        └─ write fails → write_failed (claims persisted, old report stays live, write-only retry)
  9. write OK → upsert Report (ownedBlockIds, lastRunId, lastSnapshotVersion, lastGeneratedAt) → committed
 ```
 
 ```
-ReportRun:  queued ─▶ running ─┬─▶ committed     (claims persisted + Notion write OK; incl. honest-fallback)
-                               ├─▶ write_failed  (claims persisted; Notion write failed — write-only retry)
-                               └─▶ failed         (pre-persistence failure)
+ReportRun:  queued ─▶ running ──┬─▶ committed     (claims persisted + Notion write OK; incl. honest-fallback)
+                                ├─▶ write_failed  (claims persisted; Notion write failed — retryable)
+                                └─▶ failed         (pre-persistence failure)
+
+write_failed ─(POST …/retry-write)─▶ rewriting ──┬─▶ committed
+                                                 └─▶ write_failed
 ```
 
-**Write-only retry:** replays only steps 8–9 from the persisted `ReportClaim`s (assembly is deterministic
-from them) — no AI call. A fresh analysis is a new `ReportRun`.
+**Write-only retry (D-10):** `POST /api/report/runs/[id]/retry-write` atomically claims the latest
+`write_failed` run (`write_failed → rewriting`, guarded so only one retry wins) and enqueues a **write-only**
+job that replays only steps 8–9 from the persisted `ReportClaim`s (assembly is deterministic from them) —
+no AI call. `rewriting` is inside the single-flight predicate, so a concurrent `POST /api/report` finds the
+active run and returns it instead of starting an overlapping write. A fresh analysis is a new `ReportRun`.
 
 ---
 
 ## 8. API surface
 
 - `POST /api/report` — same-origin + Clerk auth + workspace resolve + single-flight → `202 {reportRunId}`.
-  Enqueues only a newly created run (existing in-flight run returned without re-enqueue), same as M3.
+  Enqueues only a newly created run (existing in-flight run returned without re-enqueue), same as M3. The
+  in-flight check treats `queued|running|rewriting` as active, so a fresh request during a retry is
+  returned the active run rather than starting an overlapping write.
+- `POST /api/report/runs/[id]/retry-write` — same-origin + Clerk auth + workspace-scoped. Asserts the run
+  belongs to the caller's workspace and is `write_failed`, then atomically claims it
+  (`write_failed → rewriting` via a guarded `updateMany`, so only one retry wins and it occupies the
+  single-flight slot) and enqueues a **write-only** job (steps 8–9, no AI). → `202 {reportRunId}`. A run
+  not in `write_failed` (already retried/committed) yields a conflict, not a second write.
 - `GET /api/report/runs/[id]` — run status + `results`; resolves the run **and asserts `workspaceId`
   match** (no cross-tenant id enumeration). Next.js 16: `await params`.
 
@@ -404,13 +439,16 @@ from them) — no AI call. A fresh analysis is a new `ReportRun`.
     frozen `factValue`, determinism (write-only retry).
 - **Insight agent** (`ToolCaller` injected): valid output parses; one malformed → repair round;
   repair-still-bad → dropped (mirrors `schema-mapper` tests).
-- **Notion writer** (mocked client): idempotent delete-owned-then-insert; only `ownedBlockIds` deleted;
+- **Notion writer** (mocked client): idempotent **insert-new-then-delete-old** (D-7); a failure after
+  insert but before delete leaves the old report intact (never blanked); only `ownedBlockIds` deleted;
   sentinel blocks present but non-authoritative; best-effort partial-write cleanup.
 - **Job `runReport`** (fake deps): full lifecycle → `committed`; write throw → `write_failed` with claims
-  persisted; pre-persist throw → `failed`; single-flight (second concurrent → existing run, no
-  double-enqueue).
+  persisted; pre-persist throw → `failed`; **write-only retry** replays steps 8–9 from persisted claims
+  with no AI call → `committed`; single-flight (second concurrent → existing run, no double-enqueue).
 - **API routes:** same-origin/auth/workspace guards; `202 {reportRunId}`; GET run status workspace-scoped
-  (cross-tenant id → no leak).
+  (cross-tenant id → no leak); **`retry-write`** claims a `write_failed` run (→ `rewriting`), rejects a
+  non-`write_failed` run with a conflict, and a fresh `POST /api/report` during a `rewriting` run returns
+  the active run (no overlapping write).
 - **Contracts:** zod round-trips for `report.ts`; offline `Prisma.ModelName` includes
   `Report`/`ReportRun`/`ReportClaim`.
 - **One integration slice:** seeded snapshot → `runReport` with a stubbed `ToolCaller` returning canned
@@ -439,7 +477,7 @@ Redis, Prisma, Clerk all in place. No new env vars.
 7. Notion client write methods + report writer — idempotent managed region.
 8. Data access (`lib/data/reports.ts`) — tenant-scoped, single-flight.
 9. Job orchestrator + queue + worker wiring + `failed`-recovery handler.
-10. API routes (POST trigger, GET run status) + same-origin/auth/tenant guards.
+10. API routes (POST trigger, GET run status, POST retry-write) + same-origin/auth/tenant guards.
 11. UI CTA + run status.
 12. Integration slice; full gate green.
 
