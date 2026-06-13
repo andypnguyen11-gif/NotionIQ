@@ -195,7 +195,7 @@ model Chart {
   id                      String   @id @default(cuid())
   workspaceId             String // tenant scope (ADR-3) — always in WHERE
   sourceDatabaseId        String // the notionDatabaseId this chart reads
-  shape                   String // categorical | timeseries | kpi — for cheap listing/index
+  shape                   String // categorical | timeseries | kpi — drift guard for config.shape; cheap column read when listing
   config                  Json // validated by ChartConfigSchema; config.shape must equal shape
   title                   String
   snapshotVersionAtCreate Int // provenance only — never a query filter
