@@ -93,14 +93,51 @@ To trust this baseline, a future session should verify:
 ## Status
 
 - [x] Roadmap
-- [ ] M0 Foundation (`01-foundation.md`) — **written, ready to execute**
-- [ ] M1 Notion connect — not yet written
-- [ ] M2 Scanner + schema mapper — not yet written
-- [ ] M3 Truth layer — not yet written
-- [ ] M4 Reports — not yet written
+- [x] M0 Foundation (`01-foundation.md`) — **complete**
+- [x] M1 Notion connect — **complete** (OAuth connect/disconnect, AES-GCM token at rest)
+- [x] M2 Scanner + schema mapper (`docs/superpowers/plans/2026-06-08-understand-workspace.md`) — **complete** (scanner, AI schema mapper, human-in-the-loop review UI)
+- [x] M3 Truth layer (`docs/superpowers/plans/2026-06-12-truth-layer.md`) — **complete** (typed full-row ingest → `NormalizedRecord` at candidate `snapshotVersion` → all-or-nothing commit; pure metric engine; `SnapshotRun` lifecycle; build/refresh CTA) — see **M7 hardening follow-ups** below
+- [ ] M4 Reports — not yet written — **next**
 - [ ] M5 Charts — not yet written
 - [ ] M6 Business — not yet written
 - [ ] M7 Hardening — not yet written
 
 > Subsequent milestone plans are written just-in-time (right before execution) so they reflect the
 > actual code that exists, rather than going stale against drift.
+
+---
+
+## M7 hardening follow-ups (captured during M3)
+
+These were surfaced by the M3 truth-layer reviews as **non-blocking** for the MVP and are deferred
+to **M7 Hardening** (`08-hardening.md`). They are recorded here so they are not lost; do **not** fold
+them into M3 scope. Each should land with its own failing test first.
+
+- **Relation/people dimensions store raw Notion UUIDs.** `list`-kind values used as dimensions
+  (relation, people) normalize to UUID strings with no human-readable name. Warn when a `list`-kind
+  value is mapped to a dimension role, and design name-resolution in M7.
+- **`getCurrentSnapshotRecords` parses per row with `MappedFieldsSchema.parse`.** One malformed row
+  throws and fails the whole read. Switch to `safeParse` + skip-and-warn so a single bad record can't
+  blank a chart.
+- **`normalizeRow` silently drops a fully-absent measure property.** Present-but-wrong-type already
+  warns; a property that is entirely missing from the Notion row does not. Add an absent-measure
+  warning.
+- **`commit`-then-`setStatus` race can mislabel a committed run `failed`.** If the process dies
+  between the snapshot commit and the status write, the run shows `failed` despite a live committed
+  snapshot. Shared failure mode with the M2 scan worker — fix both together (idempotent
+  reconcile-on-restart).
+- **`min`/`max` return `0` on empty record sets.** No empty-set sentinel; `0` is ambiguous with a real
+  zero. Introduce an explicit empty/no-data result. (The large-input stack-overflow in these
+  primitives was fixed pre-merge in M3 — this remaining item is only the empty-set sentinel.)
+- **`isSameOrigin` duplicated across API routes.** Extract a single shared helper.
+- **Non-ISO text dates parse in the server's local timezone.** `coerceDate` falls back to `Date`
+  parsing for non-ISO strings, which is locale/timezone-dependent. Pin a parser or reject non-ISO.
+- **`setSnapshotRunStatus` updates by id alone (not tenant-scoped).** Not exploitable today (only
+  trusted worker/recovery callers reach it), but it is the one write in the snapshot data layer whose
+  tenant scope is caller-dependent rather than structural. Thread `workspaceId` and use
+  `updateMany({ where: { id, workspaceId } })`.
+- **Intra-run multi-process hardening.** The pre-merge single-flight guard (partial unique index on
+  one `queued|running` run per workspace) closes the concurrent-run snapshot-corruption path at the DB
+  level. Remaining optional hardening: a per-workspace advisory lock around the ingest body and a
+  reconcile-on-restart for runs left `running` by a hard crash (shared with the commit/setStatus race
+  above).

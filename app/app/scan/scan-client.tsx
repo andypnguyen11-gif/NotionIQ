@@ -1,7 +1,9 @@
 'use client'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { fieldRowsForReview, scanProgressLabel, isReviewable } from './scan-view'
+import { snapshotCtaLabel, snapshotProgressLabel, canBuildSnapshot } from './snapshot-view'
 import type { DatabaseMappingProposal, Role } from '@/lib/contracts/mapping'
+import type { SnapshotRunResults } from '@/lib/contracts/snapshot-run'
 
 interface DbItem { id: string; title: string }
 interface MappingRow {
@@ -13,8 +15,9 @@ interface MappingRow {
 }
 type DbResult = { notionDatabaseId: string; status: 'scanned' | 'mapped' | 'failed' }
 const ROLES: Role[] = ['date', 'measure', 'dimension', 'status', 'title', 'ignore']
+const TERMINAL_SNAPSHOT_STATUSES = ['committed', 'partial', 'failed']
 
-export function ScanClient() {
+export function ScanClient({ initialHasSnapshot = false }: { initialHasSnapshot?: boolean }) {
   const [dbs, setDbs] = useState<DbItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scanRunId, setScanRunId] = useState<string | null>(null)
@@ -24,6 +27,11 @@ export function ScanClient() {
   // per-mapping local edits: { [mappingId]: { occurredAtPropertyId, roles } }
   const [edits, setEdits] = useState<Record<string, { occurredAtPropertyId: string | null; roles: Record<string, Role> }>>({})
   const [approved, setApproved] = useState<Set<string>>(new Set())
+  const [snapshotRunId, setSnapshotRunId] = useState<string | null>(null)
+  const [snapshotStatus, setSnapshotStatus] = useState<string>('idle')
+  const [snapshotResults, setSnapshotResults] = useState<SnapshotRunResults>([])
+  const [hasSnapshot, setHasSnapshot] = useState(initialHasSnapshot)
+  const buildingRef = useRef(false)
 
   useEffect(() => {
     fetch('/api/notion/databases').then((r) => r.json()).then((d) => setDbs(d.databases ?? []))
@@ -38,6 +46,18 @@ export function ScanClient() {
     }, 1500)
     return () => clearInterval(t)
   }, [scanRunId, status])
+
+  useEffect(() => {
+    if (!snapshotRunId || TERMINAL_SNAPSHOT_STATUSES.includes(snapshotStatus)) return
+    const t = setInterval(async () => {
+      const r = await fetch(`/api/snapshot/${snapshotRunId}`).then((x) => x.json())
+      setSnapshotStatus(r.status)
+      setSnapshotResults(r.results ?? [])
+      if (r.status === 'committed') setHasSnapshot(true)
+      if (TERMINAL_SNAPSHOT_STATUSES.includes(r.status)) buildingRef.current = false
+    }, 1500)
+    return () => clearInterval(t)
+  }, [snapshotRunId, snapshotStatus])
 
   // When the run is reviewable, load the proposals and seed edit state from the AI roles.
   const loadMappings = useCallback(async (runId: string) => {
@@ -75,6 +95,24 @@ export function ScanClient() {
       body: JSON.stringify(edits[mappingId]),
     })
     if (res.ok) setApproved((prev) => new Set(prev).add(mappingId))
+  }
+
+  async function buildSnapshot() {
+    if (buildingRef.current) return
+    buildingRef.current = true
+    try {
+      const res = await fetch('/api/snapshot', { method: 'POST', headers: { 'content-type': 'application/json' } })
+      if (!res.ok) {
+        buildingRef.current = false
+        return
+      }
+      const data = await res.json()
+      setSnapshotRunId(data.snapshotRunId)
+      setSnapshotStatus('queued')
+      setSnapshotResults([])
+    } catch {
+      buildingRef.current = false
+    }
   }
 
   function setRole(mappingId: string, propId: string, role: Role) {
@@ -129,8 +167,7 @@ export function ScanClient() {
 
       {scanRunId && <p role="status" className="text-sm text-gray-600">{scanProgressLabel({ status, results })}</p>}
 
-      {isReviewable(status) &&
-        mappings.map((m) => {
+      {isReviewable(status) && mappings.map((m) => {
           const rows = fieldRowsForReview({ ...m.proposedMapping, occurredAtPropertyId: edits[m.id]?.occurredAtPropertyId ?? null })
           return (
             <section key={m.id} className="space-y-2 rounded border p-4">
@@ -191,6 +228,18 @@ export function ScanClient() {
             </section>
           )
         })}
+      {isReviewable(status) && mappings.length > 0 && (
+        <div className="space-y-2 border-t pt-4">
+          <button
+            onClick={buildSnapshot}
+            disabled={!canBuildSnapshot({ allApproved: mappings.every((m) => approved.has(m.id) || m.status === 'approved'), building: snapshotRunId !== null && !TERMINAL_SNAPSHOT_STATUSES.includes(snapshotStatus) })}
+            className="rounded bg-emerald-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+          >
+            {snapshotCtaLabel(hasSnapshot)}
+          </button>
+          {snapshotRunId && <p role="status" className="text-sm text-gray-600">{snapshotProgressLabel({ status: snapshotStatus, results: snapshotResults })}</p>}
+        </div>
+      )}
     </div>
   )
 }

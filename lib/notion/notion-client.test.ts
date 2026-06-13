@@ -58,4 +58,35 @@ describe('notion-client', () => {
     const client = createNotionClient({ ...base, fetchImpl })
     await expect(client.searchDatabases({})).rejects.toThrow(/401/)
   })
+
+  it('queryDatabaseRowsTyped maps native types to typed values keyed by property id', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        results: [
+          {
+            id: 'pg1',
+            properties: {
+              Amount: { id: 'p1', type: 'number', number: 1990 },
+              Region: { id: 'p2', type: 'select', select: { name: 'EMEA' } },
+              Tags: { id: 'p3', type: 'multi_select', multi_select: [{ name: 'a' }, { name: 'b' }] },
+              Closed: { id: 'p4', type: 'date', date: { start: '2026-06-12' } },
+              Empty: { id: 'p5', type: 'number', number: null },
+            },
+          },
+        ],
+        next_cursor: null,
+      }),
+    )
+    const client = createNotionClient({ ...base, fetchImpl })
+    const { rows, nextCursor } = await client.queryDatabaseRowsTyped('db1', {})
+    expect(nextCursor).toBeNull()
+    expect(rows[0].notionPageId).toBe('pg1')
+    expect(rows[0].values).toEqual({
+      p1: { kind: 'number', value: 1990 },
+      p2: { kind: 'text', value: 'EMEA' },
+      p3: { kind: 'list', value: ['a', 'b'] },
+      p4: { kind: 'date', value: '2026-06-12T00:00:00.000Z' },
+      p5: { kind: 'empty' },
+    })
+  })
 })
