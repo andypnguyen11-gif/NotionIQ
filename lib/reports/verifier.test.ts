@@ -95,6 +95,11 @@ describe('verifier', () => {
     expect(v.verificationStatus).not.toBe('verified')
   })
 
+  it('rejects a claim with a non-ascii (fullwidth) digit in template prose', () => {
+    const [v] = verify([{ section: 'metric', template: 'Revenue hit ＄５２００ ({value}).', assertion: { kind: 'value', factId: 'f_sum', expected: 120 } }])
+    expect(v.verificationStatus).toBe('mismatched')
+  })
+
   it('verifies a clean template with only placeholders and no prose digits', () => {
     const [v] = verify([{ section: 'metric', template: 'Total {value}.', assertion: { kind: 'value', factId: 'f_sum', expected: 120 } }])
     expect(v.verificationStatus).toBe('verified')

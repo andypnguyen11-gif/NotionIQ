@@ -44,7 +44,8 @@ function verifyOne(claim: InsightClaim, byId: Map<string, Fact>, recompute: Reco
   if (unknown.length > 0) return fail(claim, 'mismatched', `unknown placeholder(s): ${unknown.join(', ')}`)
 
   const prose = claim.template.replace(/\{[^}]+\}/g, '')
-  if (/\d/.test(prose)) return fail(claim, 'mismatched', 'literal digit in template text')
+  // \p{Nd} (Unicode decimal digit) catches fullwidth/Arabic-Indic numerals too, not just ASCII 0-9.
+  if (/\p{Nd}/u.test(prose)) return fail(claim, 'mismatched', 'literal digit in template text')
 
   if (a.kind === 'citation') {
     if (used.length > 0) return fail(claim, 'mismatched', 'citation template must contain no placeholders')
