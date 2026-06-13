@@ -3,7 +3,7 @@ import { InsightClaimsSchema, type FactSheet, type InsightClaim } from '@/lib/co
 import type { ToolCaller } from './anthropic-client'
 import { log } from '@/lib/log'
 
-export const PROMPT_VERSION = 'insight-v1'
+export const PROMPT_VERSION = 'insight-v2'
 const TOOL_NAME = 'emit_report'
 
 export interface InsightContext {
@@ -42,6 +42,8 @@ const SYSTEM = [
   'You MUST NOT write any number yourself. Reference a fact by its factId and assert what it shows;',
   'the system fills numbers from the engine. In templates, use ONLY these placeholders:',
   '{value} {previousValue} {delta.absolute} {delta.relative} {groupKey}. No other placeholder and no literal numbers.',
+  'NEVER write a literal digit anywhere in template prose (not even in words like "Q4" or "2026");',
+  'every number a reader sees must come solely from one of the allowed placeholders. A template whose prose contains any digit is rejected.',
   'Each claim has a section, a template sentence, and a structured assertion:',
   "value {factId, expected}, trend {factId, direction}, rank {factId, groupKey, position}, or citation {factIds}.",
   'Recommendations MUST use a citation assertion that cites at least one factId and contain no placeholders.',

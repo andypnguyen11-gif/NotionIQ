@@ -85,6 +85,21 @@ describe('verifier', () => {
     expect(bad.verificationStatus).toBe('unevidenced')
   })
 
+  it('rejects a value claim with a literal digit in template prose', () => {
+    const [v] = verify([{ section: 'metric', template: 'Revenue hit $5,200,000 ({value}).', assertion: { kind: 'value', factId: 'f_sum', expected: 120 } }])
+    expect(v.verificationStatus).toBe('mismatched')
+  })
+
+  it('rejects a citation claim with a literal digit in prose', () => {
+    const [v] = verify([{ section: 'recommendation', template: 'Cut the 40% of waste.', assertion: { kind: 'citation', factIds: ['f_sum'] } }])
+    expect(v.verificationStatus).not.toBe('verified')
+  })
+
+  it('verifies a clean template with only placeholders and no prose digits', () => {
+    const [v] = verify([{ section: 'metric', template: 'Total {value}.', assertion: { kind: 'value', factId: 'f_sum', expected: 120 } }])
+    expect(v.verificationStatus).toBe('verified')
+  })
+
   it('exposes the allowed placeholder whitelist', () => {
     expect(ALLOWED_PLACEHOLDERS).toEqual(['value', 'previousValue', 'delta.absolute', 'delta.relative', 'groupKey'])
   })
