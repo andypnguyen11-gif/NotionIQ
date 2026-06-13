@@ -116,4 +116,14 @@ describe('queryChartData', () => {
     expect(out).toEqual(cached)
     expect(d.cache.set).not.toHaveBeenCalled()
   })
+
+  it('rejects a non-JSON cached entry (fail-closed)', async () => {
+    const d = deps(2, [], 'not json')
+    await expect(queryChartData(d, chart)).rejects.toThrow()
+  })
+
+  it('rejects a cached entry that fails the contract schema (fail-closed)', async () => {
+    const d = deps(2, [], JSON.stringify({ kind: 'data', shape: 'kpi' }))
+    await expect(queryChartData(d, chart)).rejects.toThrow()
+  })
 })
