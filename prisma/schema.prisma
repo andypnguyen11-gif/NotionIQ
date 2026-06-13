@@ -27,6 +27,7 @@ model Workspace {
   report            Report?
   reportRuns        ReportRun[]
   reportClaims      ReportClaim[]
+  charts            Chart[]
 }
 
 model WorkspaceMember {
@@ -187,5 +188,21 @@ model ReportClaim {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([reportRunId])
+  @@index([workspaceId])
+}
+
+model Chart {
+  id                      String   @id @default(cuid())
+  workspaceId             String // tenant scope (ADR-3) — always in WHERE
+  sourceDatabaseId        String // the notionDatabaseId this chart reads
+  shape                   String // categorical | timeseries | kpi — for cheap listing/index
+  config                  Json // validated by ChartConfigSchema; config.shape must equal shape
+  title                   String
+  snapshotVersionAtCreate Int // provenance only — never a query filter
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   @@index([workspaceId])
 }
