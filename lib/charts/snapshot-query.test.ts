@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
-import { aggregate } from './snapshot-query'
+import { describe, it, expect, vi } from 'vitest'
+import { aggregate, cacheKey, queryChartData, type ChartCache, type ChartForQuery } from './snapshot-query'
+import type { PrismaClient } from '@prisma/client'
 import type { MetricRecord } from '@/lib/contracts/normalized'
 import type { ChartConfig } from '@/lib/contracts/chart'
 
@@ -76,5 +77,43 @@ describe('aggregate — kpi', () => {
   it('passes through the engine refusal for average over zero records', () => {
     const out = aggregate([], { shape: 'kpi', metric: { metric: 'average', measureFieldId: 'm1' } }, 5)
     expect(out).toMatchObject({ kind: 'unsupported', version: 1 })
+  })
+})
+
+describe('cacheKey', () => {
+  it('is deterministic and version-sensitive', () => {
+    const base = { chartId: 'c1', workspaceId: 'w1', normalizedFilterSet: '' }
+    expect(cacheKey({ ...base, snapshotVersion: 3 })).toBe('c1:w1::3')
+    expect(cacheKey({ ...base, snapshotVersion: 4 })).not.toBe(cacheKey({ ...base, snapshotVersion: 3 }))
+  })
+})
+
+describe('queryChartData', () => {
+  const chart: ChartForQuery = {
+    id: 'c1', workspaceId: 'w1', sourceDatabaseId: 'db1',
+    config: { shape: 'kpi', metric: { metric: 'count' } },
+  }
+  function deps(version: number, rows: unknown[], cacheValue: string | null) {
+    const cache: ChartCache = { get: vi.fn(async () => cacheValue), set: vi.fn(async () => {}) }
+    const prisma = {
+      workspace: { findUniqueOrThrow: vi.fn(async () => ({ snapshotVersion: version })) },
+      normalizedRecord: { findMany: vi.fn(async () => rows) },
+    } as unknown as PrismaClient
+    return { prisma, cache }
+  }
+
+  it('on cache miss: aggregates and writes the result under the versioned key', async () => {
+    const d = deps(2, [{ occurredAt: null, mappedFields: { measures: {}, dimensions: {}, status: {} } }], null)
+    const out = await queryChartData(d, chart)
+    expect(out).toMatchObject({ kind: 'data', shape: 'kpi', value: 1, snapshotVersion: 2 })
+    expect(d.cache.set).toHaveBeenCalledWith('c1:w1::2', JSON.stringify(out))
+  })
+
+  it('on cache hit: returns the cached contract without re-aggregating', async () => {
+    const cached = { kind: 'data', version: 1, snapshotVersion: 2, shape: 'kpi', value: 99 }
+    const d = deps(2, [], JSON.stringify(cached))
+    const out = await queryChartData(d, chart)
+    expect(out).toEqual(cached)
+    expect(d.cache.set).not.toHaveBeenCalled()
   })
 })

@@ -1,8 +1,10 @@
+import type { PrismaClient } from '@prisma/client'
 import type { MetricRecord } from '@/lib/contracts/normalized'
 import type { NamedMetricRequest } from '@/lib/contracts/metrics'
 import { resolveNamedMetric } from '@/lib/metrics/named'
 import { bucketByTime } from '@/lib/metrics/primitives'
-import { CHART_CONTRACT_VERSION, type ChartConfig, type ChartDataContract, type MetricRequest } from '@/lib/contracts/chart'
+import { getCurrentSnapshot } from '@/lib/data/normalized'
+import { CHART_CONTRACT_VERSION, ChartDataContractSchema, type ChartConfig, type ChartDataContract, type MetricRequest } from '@/lib/contracts/chart'
 
 const UNSPECIFIED = '(Unspecified)'
 
@@ -61,4 +63,41 @@ export function aggregate(records: MetricRecord[], config: ChartConfig, snapshot
     points.push({ bucket, value: r.value })
   }
   return { kind: 'data', version: CHART_CONTRACT_VERSION, snapshotVersion, shape: 'timeseries', granularity: config.bucket, points }
+}
+
+// Deterministic aggregation cache key (ADR-4). normalizedFilterSet is '' in this slice; the
+// config-filters slice fills it in with the same normalization so keys stay stable across slices.
+export function cacheKey(args: { chartId: string; workspaceId: string; normalizedFilterSet: string; snapshotVersion: number }): string {
+  return `${args.chartId}:${args.workspaceId}:${args.normalizedFilterSet}:${args.snapshotVersion}`
+}
+
+export interface ChartCache {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string): Promise<void>
+}
+
+export interface ChartForQuery {
+  id: string
+  workspaceId: string
+  sourceDatabaseId: string
+  config: ChartConfig
+}
+
+// Order matters: read the snapshot FIRST (it yields the version the key needs), so the key and the
+// contract's snapshotVersion always agree even if a scan commits mid-request. On hit, re-validate
+// the cached JSON through the contract schema before returning.
+export async function queryChartData(
+  deps: { prisma: PrismaClient; cache: ChartCache },
+  chart: ChartForQuery,
+): Promise<ChartDataContract> {
+  const { snapshotVersion, records } = await getCurrentSnapshot(deps.prisma, {
+    workspaceId: chart.workspaceId,
+    sourceDatabaseId: chart.sourceDatabaseId,
+  })
+  const key = cacheKey({ chartId: chart.id, workspaceId: chart.workspaceId, normalizedFilterSet: '', snapshotVersion })
+  const cached = await deps.cache.get(key)
+  if (cached) return ChartDataContractSchema.parse(JSON.parse(cached))
+  const contract = aggregate(records, chart.config, snapshotVersion)
+  await deps.cache.set(key, JSON.stringify(contract))
+  return contract
 }
