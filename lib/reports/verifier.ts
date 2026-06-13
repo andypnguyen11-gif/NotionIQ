@@ -43,6 +43,9 @@ function verifyOne(claim: InsightClaim, byId: Map<string, Fact>, recompute: Reco
   const unknown = used.filter((p) => !ALLOWED_PLACEHOLDERS.includes(p as never))
   if (unknown.length > 0) return fail(claim, 'mismatched', `unknown placeholder(s): ${unknown.join(', ')}`)
 
+  const prose = claim.template.replace(/\{[^}]+\}/g, '')
+  if (/\d/.test(prose)) return fail(claim, 'mismatched', 'literal digit in template text')
+
   if (a.kind === 'citation') {
     if (used.length > 0) return fail(claim, 'mismatched', 'citation template must contain no placeholders')
     const verifiable = a.factIds.some((id) => {
