@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { PrismaClient } from '@prisma/client'
-import { writeSnapshotRecords, commitSnapshot, cleanOrphanCandidates, getCurrentSnapshotRecords } from './normalized'
+import { writeSnapshotRecords, commitSnapshot, cleanOrphanCandidates, getCurrentSnapshotRecords, getSnapshotRecordsAtVersion } from './normalized'
 
 function fakePrisma(over: Record<string, unknown> = {}) {
   return {
@@ -63,5 +63,17 @@ describe('normalized data access', () => {
     })
     const recs = await getCurrentSnapshotRecords(prisma, { workspaceId: 'ws_1' })
     expect(recs).toEqual([{ occurredAt: '2026-06-12T00:00:00.000Z', mappedFields: { measures: { amt: { name: 'Amount', value: 5 } }, dimensions: {}, status: {} } }])
+  })
+
+  it('reads normalized records at an explicit version, workspace-scoped', async () => {
+    const findMany = vi.fn(async () => [
+      { occurredAt: null, mappedFields: { measures: {}, dimensions: {}, status: {} } },
+    ])
+    const prisma = { normalizedRecord: { findMany } } as unknown as PrismaClient
+    const recs = await getSnapshotRecordsAtVersion(prisma, { workspaceId: 'ws_1', version: 2, sourceDatabaseId: 'db1' })
+    expect(recs).toHaveLength(1)
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { workspaceId: 'ws_1', snapshotVersion: 2, sourceDatabaseId: 'db1' } }),
+    )
   })
 })

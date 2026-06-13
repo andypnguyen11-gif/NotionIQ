@@ -35,6 +35,21 @@ export async function cleanOrphanCandidates(prisma: PrismaClient, args: { worksp
   await prisma.normalizedRecord.deleteMany({ where: { workspaceId: args.workspaceId, snapshotVersion: { gt: args.currentVersion } } })
 }
 
+// Reads a specific snapshot version (M3 retains current + previous). Used by M4 to build
+// previous-snapshot deltas without reading live Notion. ADR-3 scoped.
+export async function getSnapshotRecordsAtVersion(
+  prisma: PrismaClient,
+  args: { workspaceId: string; version: number; sourceDatabaseId?: string },
+): Promise<MetricRecord[]> {
+  const rows = await prisma.normalizedRecord.findMany({
+    where: { workspaceId: args.workspaceId, snapshotVersion: args.version, ...(args.sourceDatabaseId ? { sourceDatabaseId: args.sourceDatabaseId } : {}) },
+  })
+  return rows.map((r) => ({
+    occurredAt: r.occurredAt ? r.occurredAt.toISOString() : null,
+    mappedFields: MappedFieldsSchema.parse(r.mappedFields),
+  }))
+}
+
 // Read the live snapshot only — resolves the workspace's current version and filters to it, so
 // orphaned N+1 candidates from a failed run are never returned. Always workspace-scoped (ADR-3).
 export async function getCurrentSnapshotRecords(
