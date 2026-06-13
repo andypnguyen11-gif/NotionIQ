@@ -203,7 +203,13 @@ route.
 
 `run-report.ts` — pure orchestrator `runReport(deps, reportRunId)` with the status lifecycle.
 `report-queue.ts` — queue + `enqueueReport`. `worker.ts` — `buildReportDeps()` wiring + a `failed`-recovery
-handler that flips a stuck `running` run to `failed` (idempotent), same as M3.
+handler (idempotent, same spirit as M3) that recovers a stuck active run **by its current status**:
+
+- stuck **`running`** (died before/at the pipeline, claims not yet persisted) → **`failed`**
+- stuck **`rewriting`** (a write-only retry died) → **`write_failed`**, so the user can re-trigger the
+  write-only retry path; claims and the prior report are untouched
+
+Both transitions free the single-flight slot. A run already in a terminal state is left as-is.
 
 ### Contracts (`lib/contracts/report.ts`)
 
@@ -408,6 +414,10 @@ active run and returns it instead of starting an overlapping write. A fresh anal
   (`write_failed → rewriting` via a guarded `updateMany`, so only one retry wins and it occupies the
   single-flight slot) and enqueues a **write-only** job (steps 8–9, no AI). → `202 {reportRunId}`. A run
   not in `write_failed` (already retried/committed) yields a conflict, not a second write.
+
+If `retry-write` and a fresh `POST /api/report` race, **both sides handle the partial-unique conflict
+gracefully** (M3's `P2002` spirit): the loser of the `create`/`updateMany` does not error out — it
+re-reads and returns the active run. Net effect either way: exactly one active run, one write to the page.
 - `GET /api/report/runs/[id]` — run status + `results`; resolves the run **and asserts `workspaceId`
   match** (no cross-tenant id enumeration). Next.js 16: `await params`.
 
@@ -445,6 +455,8 @@ active run and returns it instead of starting an overlapping write. A fresh anal
 - **Job `runReport`** (fake deps): full lifecycle → `committed`; write throw → `write_failed` with claims
   persisted; pre-persist throw → `failed`; **write-only retry** replays steps 8–9 from persisted claims
   with no AI call → `committed`; single-flight (second concurrent → existing run, no double-enqueue).
+- **Recovery handler** (fake deps): stuck `running` → `failed`; stuck `rewriting` → `write_failed`;
+  terminal run left as-is; idempotent on repeat.
 - **API routes:** same-origin/auth/workspace guards; `202 {reportRunId}`; GET run status workspace-scoped
   (cross-tenant id → no leak); **`retry-write`** claims a `write_failed` run (→ `rewriting`), rejects a
   non-`write_failed` run with a conflict, and a fresh `POST /api/report` during a `rewriting` run returns
