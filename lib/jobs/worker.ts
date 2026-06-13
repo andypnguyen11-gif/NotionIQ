@@ -13,10 +13,16 @@ import { setRunResults } from '@/lib/data/scan-runs'
 import { runScan, type RunScanDeps } from './run-scan'
 import { SCAN_QUEUE, type ScanJob } from './queue'
 import { collectTypedRows } from '@/lib/notion/typed-reader'
-import { writeSnapshotRecords, commitSnapshot, cleanOrphanCandidates } from '@/lib/data/normalized'
+import { writeSnapshotRecords, commitSnapshot, cleanOrphanCandidates, getCurrentSnapshotRecords, getSnapshotRecordsAtVersion } from '@/lib/data/normalized'
 import { setSnapshotRunStatus } from '@/lib/data/snapshot-runs'
 import { runSnapshot, type RunSnapshotDeps } from './run-snapshot'
 import { SNAPSHOT_QUEUE, type SnapshotJob } from './snapshot-queue'
+import { setReportRunStatus, persistReportClaims, upsertReport, getReport, getVerifiedClaimsForRun } from '@/lib/data/reports'
+import { draftInsights, repairInsights } from '@/lib/agents/insight'
+import { runReport, type RunReportDeps } from './run-report'
+import { REPORT_QUEUE, type ReportJob } from './report-queue'
+import { recoveryStatusFor } from './report-recovery'
+import { writeManagedReport } from '@/lib/notion/report-writer'
 
 const MODEL = 'claude-sonnet-4-6'
 
@@ -91,6 +97,58 @@ function buildSnapshotDeps(): RunSnapshotDeps {
   }
 }
 
+function buildReportDeps(): RunReportDeps {
+  const prisma = getPrisma()
+  const env = getEnv()
+  const toolCaller = createToolCaller({ sdk: createAnthropicSdk(env.ANTHROPIC_API_KEY) })
+  let cached: { workspaceId: string; client: ReturnType<typeof createNotionClient> } | undefined
+  async function clientForWorkspace(workspaceId: string) {
+    if (cached?.workspaceId === workspaceId) return cached.client
+    const conn = await prisma.notionConnection.findUniqueOrThrow({ where: { workspaceId } })
+    const token = decryptToken(conn.encryptedToken, env.TOKEN_ENCRYPTION_KEY, conn.notionWorkspaceId)
+    const client = createNotionClient({ token, rateLimiter: createRateLimiter({ ratePerSec: 3 }) })
+    cached = { workspaceId, client }
+    return client
+  }
+  return {
+    clock: () => new Date().toISOString(),
+    async loadRun(reportRunId) {
+      const run = await prisma.reportRun.findUniqueOrThrow({ where: { id: reportRunId }, include: { workspace: true } })
+      return { workspaceId: run.workspaceId, currentVersion: run.workspace.snapshotVersion, runSnapshotVersion: run.snapshotVersion }
+    },
+    async loadFactInputs(workspaceId, currentVersion) {
+      const mappings = await listApprovedMappings(prisma, workspaceId)
+      if (mappings.length === 0) return null
+      const dbs = []
+      for (const m of mappings) {
+        const current = await getCurrentSnapshotRecords(prisma, { workspaceId, sourceDatabaseId: m.notionDatabaseId })
+        const previous = currentVersion > 0 ? await getSnapshotRecordsAtVersion(prisma, { workspaceId, version: currentVersion - 1, sourceDatabaseId: m.notionDatabaseId }) : []
+        dbs.push({ sourceDatabaseId: m.notionDatabaseId, mapping: m.approvedMapping, current, previous })
+      }
+      const context = { databases: mappings.map((m) => ({ sourceDatabaseId: m.notionDatabaseId, classification: m.approvedMapping.classification })) }
+      return { dbs, context }
+    },
+    draft: (input) => draftInsights({ toolCaller, model: MODEL }, input),
+    repair: (input) => repairInsights({ toolCaller, model: MODEL }, input),
+    persistClaims: (args) => persistReportClaims(prisma, args),
+    setStatus: (args) => setReportRunStatus(prisma, args),
+    async loadReportPointer(workspaceId) {
+      const report = await getReport(prisma, { workspaceId })
+      if (report) return { notionPageId: report.notionPageId, ownedBlockIds: report.ownedBlockIds, parentPageId: report.notionPageId }
+      const client = await clientForWorkspace(workspaceId)
+      const parent = await client.searchFirstPageId()
+      if (!parent) throw Object.assign(new Error('no accessible Notion page to create the report under'), { code: 'NO_PARENT_PAGE' })
+      return { notionPageId: null, ownedBlockIds: [], parentPageId: parent }
+    },
+    async writeReport(args) {
+      const client = await clientForWorkspace(args.workspaceId)
+      return writeManagedReport(client, { report: args.report, existing: args.existing, parentPageId: args.parentPageId, title: args.title })
+    },
+    upsertReport: (args) => upsertReport(prisma, args),
+    loadVerifiedClaims: (args) => getVerifiedClaimsForRun(prisma, args),
+  }
+}
+
 const connection = { url: getEnv().REDIS_URL, maxRetriesPerRequest: null }
 new Worker<ScanJob>(SCAN_QUEUE, async (job) => runScan(buildDeps(), job.data.scanRunId), { connection })
 const snapshotWorker = new Worker<SnapshotJob>(SNAPSHOT_QUEUE, async (job) => runSnapshot(buildSnapshotDeps(), job.data.snapshotRunId), { connection })
@@ -104,5 +162,22 @@ snapshotWorker.on('failed', async (job) => {
     await setSnapshotRunStatus(getPrisma(), { snapshotRunId: job.data.snapshotRunId, status: 'failed', error: 'worker job failed', markFinished: true })
   } catch {
     log.error('snapshot_failed_handler_error', { snapshotRunId: job.data.snapshotRunId })
+  }
+})
+
+const reportWorker = new Worker<ReportJob>(REPORT_QUEUE, async (job) => runReport(buildReportDeps(), job.data), { connection })
+
+// Recovery net: a hard kill bypasses runReport's own status writes. On 'failed', recover by the
+// run's current status — running/queued -> failed, rewriting -> write_failed. Best-effort.
+reportWorker.on('failed', async (job) => {
+  if (!job) return
+  try {
+    const prisma = getPrisma()
+    const run = await prisma.reportRun.findUnique({ where: { id: job.data.reportRunId }, select: { workspaceId: true, status: true } })
+    if (!run) return
+    const next = recoveryStatusFor(run.status)
+    if (next) await setReportRunStatus(prisma, { workspaceId: run.workspaceId, reportRunId: job.data.reportRunId, status: next, error: 'worker job failed', markFinished: true })
+  } catch {
+    log.error('report_failed_handler_error', { reportRunId: job.data.reportRunId })
   }
 })
