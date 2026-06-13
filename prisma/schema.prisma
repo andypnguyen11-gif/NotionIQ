@@ -24,6 +24,9 @@ model Workspace {
   databaseMappings  DatabaseMapping[]
   normalizedRecords NormalizedRecord[]
   snapshotRuns      SnapshotRun[]
+  report            Report?
+  reportRuns        ReportRun[]
+  reportClaims      ReportClaim[]
 }
 
 model WorkspaceMember {
@@ -123,5 +126,66 @@ model SnapshotRun {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
+  @@index([workspaceId])
+}
+
+model Report {
+  id                  String    @id @default(cuid())
+  workspaceId         String    @unique // one managed destination per workspace
+  notionPageId        String
+  ownedBlockIds       String[] // authoritative delete list for the managed region
+  lastRunId           String?
+  lastSnapshotVersion Int?
+  lastGeneratedAt     DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model ReportRun {
+  id              String    @id @default(cuid())
+  workspaceId     String // tenant scope (ADR-3)
+  status          String    @default("queued") // queued|running|rewriting|committed|write_failed|failed
+  snapshotVersion Int?
+  model           String?
+  promptVersion   String?
+  inputTokens     Int?
+  outputTokens    Int?
+  results         Json? // ReportRunResults
+  error           String?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  claims    ReportClaim[]
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model ReportClaim {
+  id                 String   @id @default(cuid())
+  reportRunId        String
+  workspaceId        String // tenant scope (ADR-3)
+  section            String
+  kind               String // assertion kind: value|trend|rank|citation
+  severity           String?
+  template           String
+  renderedText       String?
+  factId             String?
+  factValue          Json? // frozen scalar/group value at write time
+  factSnapshot       Json? // frozen fact (request + value + delta + snapshotVersion)
+  verificationStatus String // verified|mismatched|unsupported|unevidenced|dropped
+  reason             String?
+  createdAt          DateTime @default(now())
+
+  run       ReportRun @relation(fields: [reportRunId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([reportRunId])
   @@index([workspaceId])
 }
