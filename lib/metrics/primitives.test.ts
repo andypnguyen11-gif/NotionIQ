@@ -44,4 +44,18 @@ describe('metric primitives', () => {
     expect(Object.keys(b).sort()).toEqual(['2026-01', '2026-02'])
     expect(b['2026-01']).toHaveLength(2)
   })
+
+  it('bucketByTime week keys by the ISO week-start (Monday), across a year boundary', () => {
+    // 2026-01-01 is a Thursday; its ISO week starts Monday 2025-12-29.
+    const b = bucketByTime([rec(1, 'EMEA', '2026-01-01T12:00:00.000Z')], 'week')
+    expect(Object.keys(b)).toEqual(['2025-12-29'])
+  })
+
+  it('min/max do not overflow the stack on large snapshots', () => {
+    // The engine reads the full committed snapshot; a spread (Math.min(...vals)) throws
+    // RangeError past the arg limit. Fold instead so large measure sets are safe.
+    const big = Array.from({ length: 200_000 }, (_, i) => rec(i, 'EMEA', null))
+    expect(min(big, 'amt')).toBe(0)
+    expect(max(big, 'amt')).toBe(199_999)
+  })
 })

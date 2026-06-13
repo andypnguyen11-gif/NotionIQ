@@ -13,14 +13,16 @@ export function avg(records: MetricRecord[], fieldId: string): number {
   return vals.length === 0 ? 0 : vals.reduce((a, b) => a + b, 0) / vals.length
 }
 
+// Fold rather than spread (Math.min(...vals)): the engine reads the full committed snapshot,
+// and spreading tens of thousands of args overflows the call stack (RangeError).
 export function min(records: MetricRecord[], fieldId: string): number {
   const vals = measureValues(records, fieldId)
-  return vals.length === 0 ? 0 : Math.min(...vals)
+  return vals.length === 0 ? 0 : vals.reduce((a, b) => (b < a ? b : a))
 }
 
 export function max(records: MetricRecord[], fieldId: string): number {
   const vals = measureValues(records, fieldId)
-  return vals.length === 0 ? 0 : Math.max(...vals)
+  return vals.length === 0 ? 0 : vals.reduce((a, b) => (b > a ? b : a))
 }
 
 export function groupBy(records: MetricRecord[], dimensionFieldId: string): Record<string, MetricRecord[]> {
