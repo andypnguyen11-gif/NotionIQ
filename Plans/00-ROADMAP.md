@@ -97,8 +97,8 @@ To trust this baseline, a future session should verify:
 - [x] M1 Notion connect — **complete** (OAuth connect/disconnect, AES-GCM token at rest)
 - [x] M2 Scanner + schema mapper (`docs/superpowers/plans/2026-06-08-understand-workspace.md`) — **complete** (scanner, AI schema mapper, human-in-the-loop review UI)
 - [x] M3 Truth layer (`docs/superpowers/plans/2026-06-12-truth-layer.md`) — **complete** (typed full-row ingest → `NormalizedRecord` at candidate `snapshotVersion` → all-or-nothing commit; pure metric engine; `SnapshotRun` lifecycle; build/refresh CTA) — see **M7 hardening follow-ups** below
-- [ ] M4 Reports — not yet written — **next**
-- [ ] M5 Charts — not yet written
+- [x] M4 Reports (`docs/superpowers/plans/2026-06-12-reports.md`) — **complete** (deterministic fact sheet → insight agent draft/repair → deterministic claim verifier → tenant-scoped report data access with single-flight → BullMQ report worker + recovery → idempotent insert-before-delete Notion report writer; trigger/status/retry-write routes + scan-page CTA)
+- [ ] M5 Charts — not yet written — **next**
 - [ ] M6 Business — not yet written
 - [ ] M7 Hardening — not yet written
 
