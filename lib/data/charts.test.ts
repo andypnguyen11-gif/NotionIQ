@@ -25,7 +25,7 @@ describe('createChart', () => {
     const res = await createChart(prisma, { workspaceId: 'w1', sourceDatabaseId: 'db1', config, title: 'T', snapshotVersionAtCreate: 3 })
     expect(res).toEqual({ id: 'c1' })
     expect(prisma.chart.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ workspaceId: 'w1', shape: 'kpi', title: 'T', snapshotVersionAtCreate: 3 }),
+      data: expect.objectContaining({ workspaceId: 'w1', sourceDatabaseId: 'db1', shape: 'kpi', config, title: 'T', snapshotVersionAtCreate: 3 }),
     }))
   })
 })

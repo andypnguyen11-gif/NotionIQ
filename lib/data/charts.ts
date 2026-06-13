@@ -21,7 +21,7 @@ export async function createChart(
       workspaceId: args.workspaceId,
       sourceDatabaseId: args.sourceDatabaseId,
       shape: args.config.shape,
-      config: args.config as unknown as Prisma.InputJsonValue,
+      config: args.config as Prisma.InputJsonValue,
       title: args.title,
       snapshotVersionAtCreate: args.snapshotVersionAtCreate,
     },
