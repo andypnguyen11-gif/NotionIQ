@@ -50,18 +50,32 @@ export async function getSnapshotRecordsAtVersion(
   }))
 }
 
-// Read the live snapshot only — resolves the workspace's current version and filters to it, so
-// orphaned N+1 candidates from a failed run are never returned. Always workspace-scoped (ADR-3).
-export async function getCurrentSnapshotRecords(
+// Read the live snapshot AND the version that produced it, in one workspace-scoped path. The
+// version is needed by both the cache key and the chart data contract, and reading it alongside
+// the records avoids a race if a scan commits mid-request. Resolves the workspace's current
+// version and filters to it, so orphaned N+1 candidates from a failed run are never returned.
+// Always workspace-scoped (ADR-3).
+export async function getCurrentSnapshot(
   prisma: PrismaClient,
   args: { workspaceId: string; sourceDatabaseId?: string },
-): Promise<MetricRecord[]> {
+): Promise<{ snapshotVersion: number; records: MetricRecord[] }> {
   const ws = await prisma.workspace.findUniqueOrThrow({ where: { id: args.workspaceId }, select: { snapshotVersion: true } })
   const rows = await prisma.normalizedRecord.findMany({
     where: { workspaceId: args.workspaceId, snapshotVersion: ws.snapshotVersion, ...(args.sourceDatabaseId ? { sourceDatabaseId: args.sourceDatabaseId } : {}) },
   })
-  return rows.map((r) => ({
-    occurredAt: r.occurredAt ? r.occurredAt.toISOString() : null,
-    mappedFields: MappedFieldsSchema.parse(r.mappedFields),
-  }))
+  return {
+    snapshotVersion: ws.snapshotVersion,
+    records: rows.map((r) => ({
+      occurredAt: r.occurredAt ? r.occurredAt.toISOString() : null,
+      mappedFields: MappedFieldsSchema.parse(r.mappedFields),
+    })),
+  }
+}
+
+// Back-compat for M4 callers: records only. Delegates to getCurrentSnapshot so behavior stays identical.
+export async function getCurrentSnapshotRecords(
+  prisma: PrismaClient,
+  args: { workspaceId: string; sourceDatabaseId?: string },
+): Promise<MetricRecord[]> {
+  return (await getCurrentSnapshot(prisma, args)).records
 }
