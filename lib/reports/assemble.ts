@@ -1,5 +1,5 @@
 // lib/reports/assemble.ts
-import type { Fact, Section, Severity, VerifiedClaim } from '@/lib/contracts/report'
+import type { Section, Severity, VerifiedClaim } from '@/lib/contracts/report'
 
 export const SECTION_ORDER: Section[] = ['summary', 'metric', 'trend', 'warning', 'recommendation']
 export const FALLBACK_TEXT = 'Not enough verified data to report this run.'

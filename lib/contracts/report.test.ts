@@ -3,7 +3,6 @@ import { describe, it, expect } from 'vitest'
 import {
   MetricRequestSpecSchema,
   FactSchema,
-  FactSheetSchema,
   ClaimAssertionSchema,
   InsightClaimSchema,
   InsightClaimsSchema,
