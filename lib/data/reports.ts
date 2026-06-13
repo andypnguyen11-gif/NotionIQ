@@ -97,6 +97,14 @@ export async function persistReportClaims(prisma: PrismaClient, args: { workspac
   })
 }
 
+// D-8 recovery signal: any persisted ReportClaim row means the (atomic createMany) persist step ran
+// and claims are durable. persistReportClaims stores ALL final claims (incl. dropped), so count > 0
+// reliably means a stuck run's claims survive and the write can be retried. Tenant-scoped.
+export async function hasPersistedClaims(prisma: PrismaClient, args: { workspaceId: string; reportRunId: string }): Promise<boolean> {
+  const n = await prisma.reportClaim.count({ where: { reportRunId: args.reportRunId, workspaceId: args.workspaceId } })
+  return n > 0
+}
+
 export async function upsertReport(
   prisma: PrismaClient,
   args: { workspaceId: string; notionPageId: string; ownedBlockIds: string[]; lastRunId: string; lastSnapshotVersion: number; lastGeneratedAt: Date },
