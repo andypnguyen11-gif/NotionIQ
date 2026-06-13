@@ -28,7 +28,7 @@ export function createNotionClient(opts: {
   const doFetch = opts.fetchImpl ?? fetch
   // Single network path for all three reads: rate-limit, send with auth + version headers,
   // throw on non-ok (status attached so withBackoff can retry 429/5xx). GET omits the body.
-  async function call(args: { method: 'GET' | 'POST'; path: string; body?: unknown }): Promise<unknown> {
+  async function call(args: { method: 'GET' | 'POST' | 'DELETE'; path: string; body?: unknown }): Promise<unknown> {
     await opts.rateLimiter.acquire()
     return withBackoff(
       async () => {
@@ -100,6 +100,40 @@ export function createNotionClient(opts: {
         return { notionPageId: row.id, values }
       })
       return { rows, nextCursor: raw.next_cursor }
+    },
+
+    async createPage(args: { parentPageId: string; title: string }): Promise<string> {
+      const raw = (await call({
+        method: 'POST',
+        path: '/pages',
+        body: {
+          parent: { page_id: args.parentPageId },
+          properties: { title: { title: [{ type: 'text', text: { content: args.title } }] } },
+        },
+      })) as { id: string }
+      return raw.id
+    },
+
+    async appendBlockChildren(blockId: string, children: unknown[]): Promise<string[]> {
+      const raw = (await call({ method: 'POST', path: `/blocks/${blockId}/children`, body: { children } })) as { results: { id: string }[] }
+      return raw.results.map((b) => b.id)
+    },
+
+    async listBlockChildren(blockId: string, args: { cursor?: string }): Promise<{ blockIds: string[]; nextCursor: string | null }> {
+      const qs = args.cursor ? `?start_cursor=${encodeURIComponent(args.cursor)}` : ''
+      const raw = (await call({ method: 'GET', path: `/blocks/${blockId}/children${qs}` })) as { results: { id: string }[]; next_cursor: string | null }
+      return { blockIds: raw.results.map((b) => b.id), nextCursor: raw.next_cursor }
+    },
+
+    async deleteBlock(blockId: string): Promise<void> {
+      await call({ method: 'DELETE', path: `/blocks/${blockId}` })
+    },
+
+    // First page the integration can access — the default parent for the managed report page on
+    // first run. Returns null if the integration has no page access (caller surfaces a clear error).
+    async searchFirstPageId(): Promise<string | null> {
+      const raw = (await call({ method: 'POST', path: '/search', body: { filter: { property: 'object', value: 'page' }, page_size: 1 } })) as { results: { id: string }[] }
+      return raw.results[0]?.id ?? null
     },
   }
 }
